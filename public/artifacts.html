@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flaretown · Artifacts</title>
+  <link rel="stylesheet" href="/ui.css">
+  <style>
+    .inner.wide { max-width: 1200px; }
+    .repo-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .crumbs { font-family: ui-monospace, monospace; font-size: 13px; margin-bottom: 8px; }
+    .crumbs a { cursor: pointer; }
+    .browser { display: grid; grid-template-columns: 280px 1fr; gap: 12px; }
+    .tree { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 6px; align-self: start; }
+    .tree a { display: flex; gap: 8px; padding: 5px 8px; border-radius: 6px; color: var(--fg); font-size: 14px; cursor: pointer; word-break: break-all; }
+    .tree a:hover, .tree a.active { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .viewer { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; min-height: 240px; min-width: 0; }
+    .viewer .bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; color: var(--muted); }
+    .viewer pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font: 13px/1.5 ui-monospace, monospace; overflow: auto; }
+    .viewer img { max-width: 100%; }
+    .viewer iframe { width: 100%; height: 70vh; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+    .md h1, .md h2, .md h3 { margin: 16px 0 8px; line-height: 1.3; } .md h1 { font-size: 20px; } .md h2 { font-size: 17px; } .md h3 { font-size: 15px; }
+    .md code { font-family: ui-monospace, monospace; font-size: 13px; background: var(--bg); padding: 1px 4px; border-radius: 4px; }
+    .md pre code { background: none; padding: 0; }
+    .tag { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+    .tag.warn { border-color: var(--accent); color: var(--accent); }
+    .tag.pin { border-color: var(--ok); color: var(--ok); }
+    .tag.gone { text-decoration: line-through; }
+    .diff { font: 12px/1.45 ui-monospace, monospace; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow: auto; margin: 6px 0 14px; }
+    .diff div { white-space: pre-wrap; word-break: break-word; padding: 0 8px; }
+    .diff .add { background: color-mix(in srgb, var(--ok) 16%, transparent); }
+    .diff .del { background: color-mix(in srgb, var(--bad) 16%, transparent); }
+    .diff .gap { color: var(--muted); }
+    .row-actions { display: flex; gap: 6px; align-items: center; }
+    .row-actions input { width: 70px; padding: 3px 6px; }
+    td .ghost { padding: 3px 10px; font-size: 13px; }
+    @media (max-width: 800px) { .browser { grid-template-columns: 1fr; } }
+  </style>
+  <script src="/nav.js" defer></script>
+</head>
+<body>
+  <div class="layout">
+    <main>
+      <div class="inner wide">
+        <header>
+          <h1 id="title">Artifacts</h1>
+          <div class="actions" id="head-actions"></div>
+        </header>
+        <div id="tabs" class="tabs" hidden>
+          <button data-tab="files">Files</button>
+          <button data-tab="tasks">Tasks<span class="count" id="c-tasks"></span></button>
+          <button data-tab="history">History</button>
+        </div>
+        <div id="content"><div class="empty">Loading…</div></div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const el = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+    const when = (iso) => (iso ? new Date(iso).toLocaleString() : "—");
+    const short = (h) => String(h || "").slice(0, 7);
+    const params = () => new URLSearchParams(location.search);
+
+    async function api(method, url, body) {
+      const res = await fetch(url, { method, headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined });
+      const ct = res.headers.get("content-type") || "";
+      const data = ct.includes("json") ? await res.json() : null;
+      if (!res.ok) throw new Error(data ? `${data.error}${data.hint ? ` (${data.hint})` : ""}` : `HTTP ${res.status}`);
+      return data;
+    }
+    function nav(q) {
+      const u = new URL(location.href);
+      u.search = new URLSearchParams(Object.entries(q).filter(([, v]) => v != null && v !== "")).toString();
+      history.pushState(null, "", u);
+      route();
+    }
+    window.addEventListener("popstate", route);
+
+    // ---- tiny Markdown renderer (escaped first; no raw HTML) --------------------------------
+    function inline(s) {
+      return s
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+        .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+|\/[^)\s]*)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    }
+    function markdown(src) {
+      const lines = esc(src).split("\n");
+      let out = "", list = null, code = false, para = [];
+      const flush = () => { if (para.length) { out += `<p>${inline(para.join(" "))}</p>`; para = []; } };
+      const closeList = () => { if (list) { out += `</${list}>`; list = null; } };
+      for (const line of lines) {
+        if (line.startsWith("```")) { flush(); closeList(); out += code ? "</code></pre>" : "<pre><code>"; code = !code; continue; }
+        if (code) { out += line + "\n"; continue; }
+        let m;
+        if ((m = line.match(/^(#{1,6})\s+(.*)/))) { flush(); closeList(); const n = Math.min(m[1].length, 3); out += `<h${n}>${inline(m[2])}</h${n}>`; }
+        else if ((m = line.match(/^\s*[-*]\s+(?:\[( |x)\]\s+)?(.*)/))) { flush(); if (list !== "ul") { closeList(); out += "<ul>"; list = "ul"; } out += `<li>${m[1] ? (m[1] === "x" ? "☑ " : "☐ ") : ""}${inline(m[2])}</li>`; }
+        else if ((m = line.match(/^\s*\d+[.)]\s+(.*)/))) { flush(); if (list !== "ol") { closeList(); out += "<ol>"; list = "ol"; } out += `<li>${inline(m[1])}</li>`; }
+        else if (!line.trim()) { flush(); closeList(); }
+        else if (/^&gt;\s?/.test(line)) { flush(); closeList(); out += `<blockquote>${inline(line.replace(/^&gt;\s?/, ""))}</blockquote>`; }
+        else para.push(line);
+      }
+      flush(); closeList(); if (code) out += "</code></pre>";
+      return out;
+    }
+
+    // ---- line diff (LCS, bounded) -------------------------------------------------------------
+    function lineDiff(a, b) {
+      const A = (a ?? "").split("\n"), B = (b ?? "").split("\n");
+      if (a == null) return B.map((l) => ["add", l]);
+      if (b == null) return A.map((l) => ["del", l]);
+      if (A.length * B.length > 4e6) return [...A.map((l) => ["del", l]), ...B.map((l) => ["add", l])];
+      const n = A.length, m = B.length, L = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+      for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+      const out = []; let i = 0, j = 0;
+      while (i < n && j < m) {
+        if (A[i] === B[j]) { out.push(["same", A[i]]); i++; j++; }
+        else if (L[i + 1][j] >= L[i][j + 1]) out.push(["del", A[i++]]);
+        else out.push(["add", B[j++]]);
+      }
+      while (i < n) out.push(["del", A[i++]]);
+      while (j < m) out.push(["add", B[j++]]);
+      return out;
+    }
+    function renderDiff(f) {
+      if (f.before == null && f.after == null) return `<div class="meta">Binary or large file.</div>`;
+      const d = lineDiff(f.before, f.after);
+      const keep = d.map((x, k) => x[0] !== "same" || d.slice(Math.max(0, k - 3), k + 4).some((y) => y[0] !== "same"));
+      let html = "", skipped = false;
+      d.forEach(([t, l], k) => {
+        if (!keep[k]) { if (!skipped) html += `<div class="gap">…</div>`; skipped = true; return; }
+        skipped = false;
+        html += `<div class="${t === "same" ? "" : t}">${t === "add" ? "+" : t === "del" ? "-" : " "} ${esc(l)}</div>`;
+      });
+      return `<div class="diff">${html}</div>`;
+    }
+
+    // ---- repo list ------------------------------------------------------------------------------
+    async function showList() {
+      el("title").textContent = "Artifacts";
+      el("head-actions").innerHTML = "";
+      el("tabs").hidden = true;
+      const { repos } = await api("GET", "/api/artifacts");
+      if (!repos.length) { el("content").innerHTML = `<div class="empty">No agents yet.</div>`; return; }
+      el("content").innerHTML = `
+        <table><thead><tr><th>Agent</th><th>Repo</th><th>Last commit</th><th>Reports</th></tr></thead><tbody>
+        ${repos.map((r) => `<tr data-agent="${esc(r.id)}">
+          <td>${esc(r.name)} <span class="meta">${esc(r.tier)}${r.status === "retired" ? " · retired (read-only)" : ""}</span></td>
+          <td class="id">${r.artifact_repo ? esc(r.artifact_repo) : "—"}</td>
+          <td>${r.last_commit ? `${esc(r.last_commit.message.split("\n")[0])} <span class="meta">${when(r.last_commit.date)}</span>` : `<span class="meta">${r.artifact_repo ? "empty" : "not created yet"}</span>`}</td>
+          <td>${r.reports}</td></tr>`).join("")}
+        </tbody></table>`;
+      el("content").querySelectorAll("tr[data-agent]").forEach((tr) => tr.addEventListener("click", () => nav({ agent: tr.dataset.agent })));
+    }
+
+    // ---- repo view ------------------------------------------------------------------------------
+    let agentName = "";
+    async function showRepo(agent, tab) {
+      el("tabs").hidden = false;
+      el("tabs").querySelectorAll("button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.tab === tab);
+        b.onclick = () => nav({ agent, tab: b.dataset.tab });
+      });
+      el("head-actions").innerHTML = `<a class="ghost" href="/artifacts.html">All repos</a><a class="ghost" href="/chat.html?agent=${encodeURIComponent(agent)}">Open chat</a>`;
+      if (!agentName) {
+        const { repos } = await api("GET", "/api/artifacts");
+        const r = repos.find((x) => x.id === agent);
+        agentName = r ? `${r.name} · ${r.artifact_repo || "no repo"}` : agent;
+      }
+      el("title").textContent = agentName;
+      api("GET", `/api/artifacts/${agent}/tasks`).then((d) => (el("c-tasks").textContent = d.tasks.length || "")).catch(() => {});
+      if (tab === "tasks") return showTasks(agent);
+      if (tab === "history") return params().get("commit") ? showCommit(agent, params().get("commit")) : showHistory(agent);
+      return showFiles(agent, params().get("path") || "", params().get("file"));
+    }
+
+    function crumbs(agent, path) {
+      const parts = path.split("/").filter(Boolean);
+      let acc = "";
+      return `<div class="crumbs"><a data-path="">/</a>${parts.map((p) => { acc = acc ? `${acc}/${p}` : p; return ` <a data-path="${esc(acc)}">${esc(p)}</a> /`; }).join("")}</div>`;
+    }
+
+    async function showFiles(agent, path, file) {
+      const { entries } = await api("GET", `/api/artifacts/${agent}/tree?path=${encodeURIComponent(path)}`);
+      const up = path ? path.split("/").slice(0, -1).join("/") : null;
+      el("content").innerHTML = `${crumbs(agent, path)}
+        <div class="browser">
+          <div class="tree">
+            ${up !== null ? `<a data-dir="${esc(up)}">📁 ..</a>` : ""}
+            ${entries.length ? entries.map((e) => e.type === "tree"
+              ? `<a data-dir="${esc(e.path)}">📁 ${esc(e.name)}</a>`
+              : `<a data-file="${esc(e.path)}" class="${e.path === file ? "active" : ""}">📄 ${esc(e.name)}</a>`).join("") : `<div class="empty">Empty</div>`}
+          </div>
+          <div class="viewer" id="viewer"><div class="empty">Pick a file.</div></div>
+        </div>`;
+      el("content").querySelectorAll("[data-path]").forEach((a) => (a.onclick = () => nav({ agent, path: a.dataset.path })));
+      el("content").querySelectorAll("[data-dir]").forEach((a) => (a.onclick = () => nav({ agent, path: a.dataset.dir })));
+      el("content").querySelectorAll("[data-file]").forEach((a) => (a.onclick = () => nav({ agent, path, file: a.dataset.file })));
+      if (file) viewFile(agent, file);
+    }
+
+    let raw = false;
+    async function viewFile(agent, file) {
+      const v = el("viewer");
+      v.innerHTML = `<div class="empty">Loading…</div>`;
+      const url = `/api/artifacts/${agent}/file?path=${encodeURIComponent(file)}`;
+      const ext = (file.split(".").pop() || "").toLowerCase();
+      const bar = (extra = "") => `<div class="bar"><span class="id">${esc(file)}</span><span class="row-actions">${extra}<a href="${url}" target="_blank" rel="noopener">Raw</a></span></div>`;
+      try {
+        if (["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(ext)) {
+          // SVG through <img> doesn't run scripts.
+          v.innerHTML = bar() + `<img alt="" src="${url}">`;
+          return;
+        }
+        if (ext === "pdf") { v.innerHTML = bar() + `<iframe src="${url}" title="PDF"></iframe>`; return; }
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await res.text();
+        if (ext === "html" || ext === "htm") {
+          v.innerHTML = bar(`<button class="ghost" id="toggle">${raw ? "Rendered" : "Source"}</button>`) + (raw ? `<pre>${esc(text)}</pre>` : `<iframe sandbox="" title="HTML preview"></iframe>`);
+          if (!raw) v.querySelector("iframe").srcdoc = text;
+        } else if (ext === "md" || ext === "markdown") {
+          v.innerHTML = bar(`<button class="ghost" id="toggle">${raw ? "Rendered" : "Raw text"}</button>`) + (raw ? `<pre>${esc(text)}</pre>` : `<div class="md">${markdown(text)}</div>`);
+        } else {
+          v.innerHTML = bar() + `<pre>${esc(text)}</pre>`;
+        }
+        const t = el("toggle");
+        if (t) t.onclick = () => { raw = !raw; viewFile(agent, file); };
+      } catch (err) {
+        v.innerHTML = bar() + `<div class="error">${esc(err.message)}</div>`;
+      }
+    }
+
+    async function showHistory(agent) {
+      const { commits } = await api("GET", `/api/artifacts/${agent}/log`);
+      el("content").innerHTML = commits.length ? `
+        <table><thead><tr><th>Commit</th><th>Message</th><th>Author</th><th>When</th></tr></thead><tbody>
+        ${commits.map((c) => `<tr data-hash="${esc(c.hash)}"><td class="id">${short(c.hash)}</td><td>${esc(c.message.split("\n")[0])}</td><td>${esc(c.author)}</td><td class="meta">${when(c.date)}</td></tr>`).join("")}
+        </tbody></table>` : `<div class="empty">No commits.</div>`;
+      el("content").querySelectorAll("tr[data-hash]").forEach((tr) => tr.addEventListener("click", () => nav({ agent, tab: "history", commit: tr.dataset.hash })));
+    }
+
+    async function showCommit(agent, hash) {
+      el("content").innerHTML = `<div class="empty">Loading diff…</div>`;
+      const { commit, files } = await api("GET", `/api/artifacts/${agent}/commit/${hash}`);
+      el("content").innerHTML = `
+        <p><a href="#" id="back">← History</a></p>
+        <h2 style="font-size:16px;margin:0 0 4px">${esc(commit.message.split("\n")[0])}</h2>
+        <div class="meta"><span class="id">${short(commit.hash)}</span> · ${esc(commit.author)} · ${when(commit.date)} · ${files.length} file(s)</div>
+        ${files.map((f) => `<h3 style="font-size:14px;margin:14px 0 0"><span class="tag">${f.change}</span> <span class="id">${esc(f.path)}</span></h3>${renderDiff(f)}`).join("") || `<div class="empty">No file changes.</div>`}`;
+      el("back").onclick = (e) => { e.preventDefault(); nav({ agent, tab: "history" }); };
+    }
+
+    async function showTasks(agent) {
+      const { tasks } = await api("GET", `/api/artifacts/${agent}/tasks`);
+      if (!tasks.length) { el("content").innerHTML = `<div class="empty">No task folders yet.</div>`; return; }
+      el("content").innerHTML = `
+        <p class="meta">Folders under <span class="id">tasks/</span>. Expired folders are deleted from the tip (git history keeps them). Defaults: routine 14 days, regular 30, cancelled 7.</p>
+        <table><thead><tr><th>Task</th><th>Files</th><th>Expires</th><th>Retention</th></tr></thead><tbody>
+        ${tasks.map((t) => `<tr data-id="${esc(t.task_id)}" data-ident="${esc(t.identifier)}">
+          <td><span class="id">${esc(t.identifier)}</span> ${esc(t.title)} <span class="state">${esc(t.state)}</span></td>
+          <td>${t.files}</td>
+          <td>${t.artifacts_deleted_at ? `<span class="tag gone">deleted ${when(t.artifacts_deleted_at)}</span>`
+              : t.artifacts_pinned ? `<span class="tag pin">pinned</span>`
+              : t.expires_at ? `${when(t.expires_at)} ${t.expiring_soon ? `<span class="tag warn">expiring soon</span>` : ""}`
+              : `<span class="meta">open task</span>`}</td>
+          <td><span class="row-actions">
+            <button class="ghost pin">${t.artifacts_pinned ? "Unpin" : "Pin"}</button>
+            <input type="number" min="1" max="3650" class="days" placeholder="${t.retention_days}" value="${t.artifact_retention_days ?? ""}" title="Days after close (empty = default)">
+            <span class="meta">days</span>
+          </span></td></tr>`).join("")}
+        </tbody></table><div class="error" id="err"></div>`;
+      el("content").querySelectorAll("tr[data-id]").forEach((tr) => {
+        const t = tasks.find((x) => x.task_id === tr.dataset.id);
+        tr.querySelector(".pin").onclick = async (e) => {
+          e.stopPropagation();
+          try { await api("POST", `/api/tasks/${t.task_id}/retention`, { pinned: !t.artifacts_pinned }); showTasks(agent); } catch (err) { el("err").textContent = err.message; }
+        };
+        const days = tr.querySelector(".days");
+        days.onclick = (e) => e.stopPropagation();
+        days.onchange = async () => {
+          const v = days.value.trim();
+          try { await api("POST", `/api/tasks/${t.task_id}/retention`, { days: v ? Number(v) : null }); showTasks(agent); } catch (err) { el("err").textContent = err.message; }
+        };
+        tr.addEventListener("click", () => nav({ agent, path: `tasks/${t.identifier}` }));
+      });
+    }
+
+    async function route() {
+      const p = params();
+      const agent = p.get("agent");
+      try {
+        if (!agent) { agentName = ""; return await showList(); }
+        await showRepo(agent, p.get("tab") || "files");
+      } catch (err) {
+        el("content").innerHTML = `<div class="empty error">${esc(err.message)}</div>`;
+      }
+    }
+    route();
+  </script>
+</body>
+</html>

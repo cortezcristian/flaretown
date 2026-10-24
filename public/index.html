@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flaretown</title>
+  <link rel="stylesheet" href="/ui.css">
+  <style>
+    .inner { max-width: 1200px; }
+    .counters { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .counter { display: block; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; color: var(--fg); text-decoration: none; transition: border-color .15s ease, transform .15s ease; }
+    .counter:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .counter .label { font-size: 13px; color: var(--muted); }
+    .counter .value { font-size: 28px; font-weight: 700; line-height: 1.2; }
+    .counter .sub { font-size: 12px; color: var(--muted); }
+    .chart-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    .chart-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    .chart-bar h2 { font-size: 15px; margin: 0; }
+    .chart-bar .tools { display: flex; gap: 6px; flex-wrap: wrap; }
+    .chart-bar button { border: 1px solid var(--border); background: var(--bg); color: var(--fg); border-radius: 8px; padding: 4px 10px; font: inherit; font-size: 13px; cursor: pointer; }
+    .chart-bar button.active, .chart-bar button:hover { border-color: var(--accent); color: var(--accent); }
+    #chart { background: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--muted) 18%, transparent) 1px, transparent 0) 0 0 / 22px 22px; }
+    .health { margin-top: 12px; font-size: 12px; color: var(--muted); }
+    .health .ok { color: var(--ok); } .health .bad { color: var(--bad); }
+    a.primary, a.ghost { display: inline-block; text-decoration: none; }
+    a.primary { color: #fff; }
+
+    /* Org chart nodes (HTML inside the SVG). Theme tokens only. */
+    .node { box-sizing: border-box; width: 230px; height: 112px; padding: 12px; border-radius: 14px; background: var(--card); border: 1px solid var(--border); color: var(--fg); font: 13px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif; box-shadow: 0 1px 2px color-mix(in srgb, var(--fg) 8%, transparent); transition: box-shadow .2s ease, border-color .2s ease; }
+    .node.principal { border-color: var(--accent); }
+    .node.selected { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+    .node.working { box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 35%, transparent); }
+    .node-top { display: flex; align-items: center; gap: 10px; }
+    .avatar { width: 34px; height: 34px; flex: none; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 12px; background: color-mix(in srgb, var(--accent) 18%, var(--card)); color: var(--accent); }
+    .node.principal .avatar { background: var(--accent); color: #fff; }
+    .node-who { min-width: 0; flex: 1; }
+    .node-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .node-tier { font-size: 11px; color: var(--muted); text-transform: capitalize; }
+    .node-chat { flex: none; border: 1px solid var(--border); background: var(--bg); color: var(--fg); border-radius: 7px; padding: 2px 8px; font: inherit; font-size: 12px; cursor: pointer; }
+    .node-chat:hover { border-color: var(--accent); color: var(--accent); }
+    .node-status { margin-top: 10px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+    .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .node.working .pulse { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+    .node.working .node-status { color: var(--accent); }
+    .node-task { font-family: ui-monospace, monospace; padding: 0 6px; border-radius: 6px; background: color-mix(in srgb, var(--accent) 12%, transparent); }
+    .node-meta { margin-top: 4px; font-size: 12px; color: var(--muted); }
+    @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .45; transform: scale(.75); } }
+  </style>
+  <script src="/nav.js" defer></script>
+</head>
+<body>
+  <div class="layout">
+    <main>
+      <div class="inner">
+        <header>
+          <h1>Overview</h1>
+          <div class="actions"><button class="ghost" id="toggle-panel">Activity</button></div>
+        </header>
+
+        <div class="counters">
+          <a class="counter" href="/agents.html"><div class="label">Agents</div><div class="value" id="c-agents">–</div><div class="sub" id="c-working"></div></a>
+          <a class="counter" href="/tasks.html?filter=all"><div class="label">Projects</div><div class="value" id="c-projects">–</div><div class="sub">Default + yours</div></a>
+          <a class="counter" href="/tasks.html?filter=open"><div class="label">Open tasks</div><div class="value" id="c-open">–</div><div class="sub">todo, in progress, review</div></a>
+          <a class="counter" href="/tasks.html?filter=open"><div class="label">In review</div><div class="value" id="c-review">–</div><div class="sub">waiting for the Principal</div></a>
+        </div>
+
+        <div class="chart-card" id="org">
+          <div class="chart-bar">
+            <h2>Organization</h2>
+            <div class="tools">
+              <button id="zoom-in" title="Zoom in">+</button>
+              <button id="zoom-out" title="Zoom out">−</button>
+              <button id="fit">Fit</button>
+              <button id="expand">Expand all</button>
+              <button id="collapse">Collapse all</button>
+            </div>
+          </div>
+          <div id="chart"></div>
+        </div>
+
+        <div class="health" id="health">Checking API…</div>
+      </div>
+    </main>
+
+    <aside id="panel" hidden>
+      <div class="head">
+        <h2 id="panel-title">Recent activity</h2>
+        <button class="close-panel" id="close-panel" aria-label="Close panel">×</button>
+      </div>
+      <div id="panel-body"><div class="meta">Loading…</div></div>
+    </aside>
+  </div>
+  <script type="module" src="/overview.js"></script>
+</body>
+</html>

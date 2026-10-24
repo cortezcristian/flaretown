@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# macOS-style pbcopy: stdin -> X clipboard. x11vnc syncs it to noVNC's clipboard panel.
+exec xclip -selection clipboard -in -display "${DISPLAY:-:1}"

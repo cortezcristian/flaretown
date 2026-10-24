@@ -1,0 +1,53 @@
+{
+  "name": "flaretown",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy && wrangler d1 migrations apply DB_CORE --remote && wrangler d1 migrations apply DB_RUNS --remote",
+    "types": "wrangler types",
+    "typecheck": "wrangler types && tsc --noEmit && tsc --noEmit -p client",
+    "db:migrate:local": "wrangler d1 migrations apply DB_CORE --local && wrangler d1 migrations apply DB_RUNS --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB_CORE --remote && wrangler d1 migrations apply DB_RUNS --remote",
+    "teardown": "wrangler delete && wrangler d1 delete flaretown-core && wrangler d1 delete flaretown-runs && wrangler r2 bucket delete flaretown-artifacts && echo 'Also delete the agent repos in Cloudflare Artifacts (agent-*), the sandbox container apps and images (pnpm wrangler containers list / delete, pnpm wrangler containers images list / delete), and agents/*/browser-profile.tar.gz in R2'",
+    "check:images": "bash scripts/check-images.sh",
+    "build:client": "esbuild client/chat.tsx client/overview.ts client/palette.tsx --bundle --format=esm --minify --outdir=public"
+  },
+  "dependencies": {
+    "@ai-sdk/provider": "3.0.19",
+    "@ai-sdk/react": "3.0.318",
+    "@cloudflare/ai-chat": "0.12.2",
+    "@cloudflare/computer": "0.5.1",
+    "@cloudflare/think": "0.21.0",
+    "@modelcontextprotocol/server": "2.0.0",
+    "agents": "0.30.1",
+    "ai": "6.0.315",
+    "cmdk": "^1",
+    "croner": "^9",
+    "d3": "^7",
+    "d3-org-chart": "^3",
+    "isomorphic-git": "^1.43",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-markdown": "^10",
+    "remark-gfm": "^4",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "5.9.3",
+    "wrangler": "4.152.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "esbuild": "0.28.2"
+  },
+  "cloudflare": {
+    "bindings": {}
+  },
+  "packageManager": "pnpm@12.15.0"
+}
