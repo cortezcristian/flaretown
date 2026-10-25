@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flaretown · Principal</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f7f8; --fg: #18181b; --muted: #6b6b76; --card: #ffffff;
+      --border: #e4e4e7; --accent: #f6821f; --user: #fff4ea;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0f0f12; --fg: #f4f4f5; --muted: #a1a1aa; --card: #18181d; --border: #2a2a31; --user: #2a1d12; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    .shell { display: flex; height: 100vh; }
+    .chat { flex: 1; min-width: 0; max-width: 820px; margin: 0 auto; height: 100vh; display: flex; flex-direction: column; padding: 16px; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+    .who { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+    .agent-select { border: 1px solid var(--border); background: var(--card); color: var(--fg); border-radius: 8px; padding: 4px 8px; font: inherit; font-weight: 600; }
+    .menu { display: flex; gap: 6px; }
+    .menu button, .menu .menu-link { border: 1px solid var(--border); background: var(--card); color: var(--fg); border-radius: 8px; padding: 4px 10px; font: inherit; font-size: 13px; cursor: pointer; }
+    .menu button.active { border-color: var(--accent); color: var(--accent); }
+    .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 11px; text-align: center; }
+    .side { width: 340px; flex: none; border-left: 1px solid var(--border); background: var(--card); padding: 16px; overflow-y: auto; }
+    .side-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .side-head h2 { font-size: 15px; margin: 0; }
+    .side .close { width: auto; height: auto; border: 0; background: none; color: var(--muted); font-size: 20px; cursor: pointer; border-radius: 0; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .panel-list { list-style: none; margin: 0; padding: 0; }
+    .panel-list li { padding: 8px 0; border-bottom: 1px solid var(--border); }
+    .panel-list a { color: var(--fg); text-decoration: none; }
+    .tid { font-family: ui-monospace, monospace; color: var(--muted); }
+    .ask { width: auto; height: auto; margin-top: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); border-radius: 6px; padding: 2px 8px; font: inherit; font-size: 12px; cursor: pointer; }
+    .ask:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    .ask:disabled { opacity: .5; cursor: default; }
+    .config label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+    .config select { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; }
+    .segmented { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .segmented button { flex: 1; width: auto; height: auto; border: 0; border-radius: 0; background: var(--bg); color: var(--fg); padding: 6px; font: inherit; font-size: 13px; cursor: pointer; }
+    .segmented button.active { background: var(--accent); color: #fff; }
+    .error { color: #dc2626; font-size: 13px; }
+    .cfg-input { width: 100%; box-sizing: border-box; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; }
+    .linklike { width: auto; height: auto; border: 0; background: none; color: var(--accent); padding: 0; font: inherit; cursor: pointer; text-decoration: underline; border-radius: 0; }
+    .messages li.typing { display: flex; align-items: center; gap: 10px; }
+    .dots { display: inline-flex; gap: 4px; }
+    .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); display: block; animation: blink 1.2s infinite ease-in-out; }
+    .dots i:nth-child(2) { animation-delay: .15s; }
+    .dots i:nth-child(3) { animation-delay: .3s; }
+    @keyframes blink { 0%, 80%, 100% { opacity: .25; transform: scale(.8); } 40% { opacity: 1; transform: scale(1); } }
+    .status.working { color: var(--accent); }
+    .notice { margin-top: 8px; padding: 6px 10px; border-radius: 8px; font-size: 13px; color: var(--muted); background: color-mix(in srgb, var(--accent) 8%, transparent); cursor: pointer; }
+    .markdown > :first-child { margin-top: 0; } .markdown > :last-child { margin-bottom: 0; }
+    .markdown pre { background: var(--bg); padding: 8px; border-radius: 6px; overflow-x: auto; }
+    .markdown code { font-family: ui-monospace, monospace; font-size: 13px; }
+    .markdown table { border-collapse: collapse; } .markdown th, .markdown td { border: 1px solid var(--border); padding: 4px 8px; }
+    @media (max-width: 800px) { .side { position: fixed; inset: auto 0 0 0; width: auto; max-height: 70vh; border-left: 0; border-top: 1px solid var(--border); } }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); display: inline-block; }
+    .status { font-weight: 400; color: var(--muted); font-size: 13px; }
+    .messages { list-style: none; margin: 0; padding: 16px 0; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+    .messages li { padding: 10px 14px; border-radius: 10px; background: var(--card); border: 1px solid var(--border); max-width: 85%; }
+    .messages li.user { align-self: flex-end; background: var(--user); }
+    .messages li .copy { display: grid; place-items: center; width: 26px; height: 26px; margin: 4px 0 0 auto; border: 0; background: none; color: var(--muted); border-radius: 6px; padding: 0; cursor: pointer; }
+    /* Loading skeleton (first load and agent switch) */
+    .skeleton { position: relative; }
+    .skeleton .chat { filter: blur(3px); }
+    .sk-line { display: inline-block; height: 22px; border-radius: 8px; background: var(--card); border: 1px solid var(--border); }
+    .messages li.sk-bubble { padding: 0; animation: sk-pulse 1.4s ease-in-out infinite; }
+    .messages li.sk-bubble:nth-child(2) { animation-delay: .15s; } .messages li.sk-bubble:nth-child(3) { animation-delay: .3s; } .messages li.sk-bubble:nth-child(4) { animation-delay: .45s; }
+    .sk-composer { height: 58px; margin-top: 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); }
+    .sk-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--muted); font-size: 14px; pointer-events: none; }
+    @keyframes sk-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+    body.switching .shell:not(.skeleton) { filter: blur(4px); opacity: .6; pointer-events: none; transition: filter .2s ease, opacity .2s ease; }
+    body.switching::after { content: attr(data-switching); position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 14px; pointer-events: none; }
+    .messages li .copy:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .messages p.plain { margin: 0; white-space: pre-wrap; }
+    .tool { margin: 6px 0; font-size: 13px; color: var(--muted); border-left: 2px solid var(--accent); padding-left: 8px; }
+    .tool.failed { border-left-color: #dc2626; }
+    .tool summary { cursor: pointer; }
+    .tool pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; overflow-x: auto; font-size: 12px; }
+    .tool.exec .label { margin-top: 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    .tool.exec pre { white-space: pre-wrap; }
+    .config .check { display: flex; align-items: center; gap: 8px; color: var(--fg); }
+    .config .check input { width: auto; }
+    .config .sub { padding-left: 22px; }
+    .config .sub .check { margin-top: 6px; }
+    .config .row-buttons, .container-panel .row-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+    .config .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    a.ask { display: inline-block; text-decoration: none; }
+    .cdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .cdot.on { background: #16a34a; }
+    .menu .chip { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; }
+    .container-panel { display: flex; flex-direction: column; gap: 8px; }
+    .container-panel p { margin: 0; }
+    .container-panel .vnc { width: 100%; height: calc(100vh - 150px); border: 1px solid var(--border); border-radius: 8px; background: #000; }
+    form { display: flex; gap: 8px; padding-top: 12px; border-top: 1px solid var(--border); }
+    textarea { flex: 1; resize: none; overflow: hidden; line-height: 22px; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--fg); font: inherit; }
+    form { align-items: flex-end; }
+    button.send { width: 40px; height: 40px; flex: none; display: grid; place-items: center; border-radius: 50%; border: 0; background: var(--accent); color: #fff; cursor: pointer; transition: transform .15s ease, opacity .15s ease; }
+    button.send:hover:not(:disabled) { transform: translateY(-2px); }
+    button.send:disabled { opacity: .35; cursor: default; }
+  </style>
+  <script src="/nav.js" defer></script>
+</head>
+<body>
+  <!-- Shown until the React app mounts (same markup as ChatSkeleton in client/chat.tsx). -->
+  <div id="root">
+    <div class="shell skeleton" aria-busy="true">
+      <div class="chat">
+        <header><div class="who"><span class="dot"></span><span class="sk-line" style="width:150px"></span></div><div class="menu"><span class="sk-line" style="width:190px"></span></div></header>
+        <ul class="messages">
+          <li class="sk-bubble user" style="width:45%;height:44px"></li>
+          <li class="sk-bubble" style="width:75%;height:96px"></li>
+          <li class="sk-bubble user" style="width:35%;height:44px"></li>
+          <li class="sk-bubble" style="width:65%;height:72px"></li>
+        </ul>
+        <div class="sk-composer"></div>
+      </div>
+      <div class="sk-overlay"><span class="dots"><i></i><i></i><i></i></span> <span id="sk-label">Loading chat…</span></div>
+    </div>
+  </div>
+  <script type="module" src="/chat.js"></script>
+</body>
+</html>

@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flaretown · Kanban</title>
+  <link rel="stylesheet" href="/ui.css">
+  <style>
+    .inner { max-width: none; }
+    .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+    .filters select, .filters input[type=search] { width: auto; min-width: 160px; }
+    .filters label.check { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--fg); font-size: 14px; }
+    .filters label.check input { width: auto; }
+    .board { display: grid; grid-template-columns: repeat(4, minmax(240px, 1fr)); gap: 12px; align-items: start; overflow-x: auto; }
+    .col { background: color-mix(in srgb, var(--card) 60%, var(--bg)); border: 1px solid var(--border); border-radius: 12px; min-height: 60vh; display: flex; flex-direction: column; }
+    .col.drop-ok { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+    .col-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); font-weight: 600; }
+    .col-head .n { color: var(--muted); font-weight: 500; margin-left: 6px; }
+    .col-head button { border: 0; background: none; color: var(--accent); font: inherit; font-size: 13px; cursor: pointer; }
+    .cards { padding: 8px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+    .older { padding: 0 12px 10px; font-size: 12px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px; cursor: pointer; user-select: none; transition: border-color .15s ease, box-shadow .15s ease; }
+    .card:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+    .card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+    .card.dragging { opacity: .5; }
+    .card.fade-in { animation: fadein .4s ease; }
+    .card.sub { margin-left: 14px; }
+    .card-top { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; color: var(--muted); }
+    .card-title { margin: 4px 0 8px; font-weight: 600; font-size: 14px; line-height: 1.35; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; }
+    .chip { padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+    .chip.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--border)); }
+    .chip.back { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, var(--border)); }
+    .card-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+    .who { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .who span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .av { width: 22px; height: 22px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 700; background: color-mix(in srgb, var(--accent) 18%, var(--card)); color: var(--accent); position: relative; }
+    .card.working .av::after { content: ""; position: absolute; right: -2px; bottom: -2px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); border: 2px solid var(--card); animation: pulse 1.4s ease-in-out infinite; }
+    .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; z-index: 50; }
+    @keyframes fadein { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+  </style>
+  <script src="/nav.js" defer></script>
+</head>
+<body>
+  <div class="layout">
+    <main>
+      <div class="inner">
+        <header>
+          <h1>Kanban <span class="meta" style="font-weight:400">· last 7 days</span></h1>
+        </header>
+        <div class="filters">
+          <select id="f-project"><option value="">All projects</option></select>
+          <select id="f-agent"><option value="">All agents</option></select>
+          <label class="check"><input type="checkbox" id="f-mine"> Only mine</label>
+          <input type="search" id="f-q" placeholder="Search FT-… or title">
+        </div>
+        <div class="board" id="board"></div>
+      </div>
+    </main>
+    <aside id="panel" hidden>
+      <div class="head">
+        <h2 id="panel-title"></h2>
+        <button class="close-panel" id="close-panel" aria-label="Close panel">×</button>
+      </div>
+      <div id="panel-body"></div>
+    </aside>
+  </div>
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="/task-panel.js"></script>
+  <script>
+    const el = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+    const COLUMNS = [
+      { id: "todo", title: "Todo" },
+      { id: "in_progress", title: "In Progress" },
+      { id: "review", title: "In Review" },
+      { id: "done", title: "Done" },
+    ];
+    let agents = [];
+    let selectedId = null;
+    let lastState = new Map(); // card id -> column, to animate moves
+    let dragging = null;
+
+    const nameOf = (id) => agents.find((a) => a.id === id)?.name ?? id ?? "unassigned";
+    const initials = (n) => String(n).split(/\s+/).map((w) => w[0] ?? "").join("").slice(0, 2).toUpperCase();
+    function since(iso) {
+      if (!iso) return "";
+      const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+      if (m < 60) return `${m}m`;
+      const h = Math.round(m / 60);
+      return h < 48 ? `${h}h` : `${Math.round(h / 24)}d`;
+    }
+
+    function toast(msg) {
+      const t = el("toast");
+      t.textContent = msg;
+      t.hidden = false;
+      clearTimeout(toast.timer);
+      toast.timer = setTimeout(() => (t.hidden = true), 3500);
+    }
+
+    async function apiCall(method, url, body) {
+      const res = await fetch(url, { method, headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined });
+      const data = await res.json();
+      if (!res.ok) throw new Error(`${data.error}${data.hint ? ` (${data.hint})` : ""}`);
+      return data;
+    }
+
+    function cardHtml(c, fresh) {
+      const crit = c.criteria_total ? `<span class="chip ${c.criteria_checked === c.criteria_total ? "ok" : ""}">☑ ${c.criteria_checked}/${c.criteria_total}</span>` : "";
+      const subs = c.subtasks_total ? `<span class="chip ${c.subtasks_done === c.subtasks_total ? "ok" : ""}">↳ ${c.subtasks_done}/${c.subtasks_total}</span>` : "";
+      const back = c.sent_back ? `<span class="chip back">sent back</span>` : "";
+      return `<div class="card ${c.parent_id ? "sub" : ""} ${c.working ? "working" : ""} ${c.id === selectedId ? "selected" : ""} ${fresh ? "fade-in" : ""}"
+          draggable="true" data-id="${esc(c.id)}" data-state="${esc(c.state)}">
+        <div class="card-top"><span class="id">${c.parent_id ? "↳ " : ""}${esc(c.identifier)}${c.priority ? ` · P${c.priority}` : ""}</span><span>${esc(c.project_id === "default" ? "Default" : c.project_id)}</span></div>
+        <div class="card-title">${esc(c.title)}</div>
+        <div class="chips">${crit}${subs}${back}</div>
+        <div class="card-foot">
+          <span class="who"><span class="av">${esc(initials(nameOf(c.assignee)))}</span><span>${esc(nameOf(c.assignee))}${c.working ? " · working" : ""}</span></span>
+          <span title="Time in this column">${since(c.state_changed_at)}</span>
+        </div>
+      </div>`;
+    }
+
+    function query() {
+      const p = new URLSearchParams({ view: "board", since: "7d" });
+      if (el("f-project").value) p.set("project_id", el("f-project").value);
+      if (el("f-agent").value) {
+        const [kind, id] = el("f-agent").value.split(":");
+        p.set("agent", id);
+        if (kind === "team") p.set("team", "1");
+      }
+      if (el("f-mine").checked) p.set("mine", "1");
+      if (el("f-q").value.trim()) p.set("q", el("f-q").value.trim());
+      return p.toString();
+    }
+
+    async function load() {
+      const board = await (await fetch(`/api/tasks?${query()}`)).json();
+      // FLIP: remember where each card was, render, then animate from the old spot.
+      const before = new Map([...document.querySelectorAll(".card")].map((n) => [n.dataset.id, n.getBoundingClientRect()]));
+      const known = new Set(lastState.keys());
+      el("board").innerHTML = COLUMNS.map((col) => {
+        const cards = board.columns?.[col.id] ?? [];
+        const older = (col.id === "todo" || col.id === "in_progress") && board.older_open
+          ? `<div class="older meta"><a href="/tasks.html?filter=open">${board.older_open} older open task${board.older_open === 1 ? "" : "s"} →</a></div>` : "";
+        return `<section class="col" data-col="${col.id}">
+          <div class="col-head"><span>${col.title}<span class="n">${cards.length}</span></span>${col.id === "todo" ? `<button id="new-task">+ New task</button>` : ""}</div>
+          <div class="cards">${cards.map((c) => cardHtml(c, lastState.size > 0 && !known.has(c.id))).join("")}</div>
+          ${col.id === "in_progress" ? older : ""}
+        </section>`;
+      }).join("");
+      lastState = new Map(COLUMNS.flatMap((col) => (board.columns?.[col.id] ?? []).map((c) => [c.id, col.id])));
+
+      document.querySelectorAll(".card").forEach((n) => {
+        const prev = before.get(n.dataset.id);
+        if (prev) {
+          const now = n.getBoundingClientRect();
+          const dx = prev.left - now.left, dy = prev.top - now.top;
+          if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+            n.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 450, easing: "cubic-bezier(.2,.8,.2,1)" });
+          }
+        }
+        n.addEventListener("click", () => TaskPanel.openDetails(n.dataset.id));
+        n.addEventListener("dragstart", (e) => { dragging = { id: n.dataset.id, from: n.dataset.state }; n.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; });
+        n.addEventListener("dragend", () => { n.classList.remove("dragging"); dragging = null; document.querySelectorAll(".col").forEach((c) => c.classList.remove("drop-ok")); });
+      });
+      document.querySelectorAll(".col").forEach((col) => {
+        col.addEventListener("dragover", (e) => { if (dragging) { e.preventDefault(); col.classList.add("drop-ok"); } });
+        col.addEventListener("dragleave", () => col.classList.remove("drop-ok"));
+        col.addEventListener("drop", (e) => { e.preventDefault(); col.classList.remove("drop-ok"); if (dragging) move(dragging, col.dataset.col); });
+      });
+      el("new-task")?.addEventListener("click", () => TaskPanel.openNewTask());
+    }
+
+    // Drag and drop follows task authority (SPEC-kanban 6). Anything else snaps back.
+    async function move({ id, from }, to) {
+      if (from === to) return;
+      try {
+        if (to === "done") {
+          const t = await (await fetch(`/api/tasks/${encodeURIComponent(id)}`)).json();
+          const unchecked = t.criteria.filter((c) => !c.checked).length;
+          if (unchecked && !confirm(`${unchecked} criteria are not checked. Close ${t.identifier} anyway?`)) return;
+          await apiCall("POST", `/api/tasks/${id}/close`);
+          toast(`${t.identifier} closed`);
+        } else if (from === "review" && to === "in_progress") {
+          const reason = prompt("What needs fixing? (sent to the agent)");
+          if (!reason) return;
+          await apiCall("POST", `/api/tasks/${id}/send-back`, { reason });
+          toast("Sent back");
+        } else if (from === "in_progress" && to === "todo") {
+          await apiCall("PATCH", `/api/tasks/${id}`, { state: "todo" });
+          toast("Back in the queue");
+        } else {
+          const names = { todo: "Todo", in_progress: "In Progress", review: "In Review", done: "Done" };
+          toast(`Can't move from ${names[from]} to ${names[to]}. Allowed: → Done, In Review → In Progress, In Progress → Todo.`);
+          return;
+        }
+      } catch (err) {
+        toast(err.message);
+      }
+      await load();
+    }
+
+    TaskPanel.init({
+      onChange: () => load(),
+      onSelect: (id) => {
+        selectedId = id;
+        document.querySelectorAll(".card").forEach((n) => n.classList.toggle("selected", n.dataset.id === id));
+      },
+    });
+
+    async function init() {
+      const [{ projects }, a] = await Promise.all([(await fetch("/api/projects")).json(), (await fetch("/api/agents")).json()]);
+      agents = a.agents ?? [];
+      el("f-project").innerHTML += projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+      const leads = agents.filter((x) => x.tier === "lead");
+      el("f-agent").innerHTML += [
+        `<option value="agent:principal">Principal</option>`,
+        ...leads.map((l) => `<optgroup label="${esc(l.name)}">
+          <option value="team:${esc(l.id)}">${esc(l.name)} + team</option>
+          <option value="agent:${esc(l.id)}">${esc(l.name)} only</option>
+          ${agents.filter((o) => o.parent_id === l.id).map((o) => `<option value="agent:${esc(o.id)}">${esc(o.name)}</option>`).join("")}
+        </optgroup>`),
+      ].join("");
+      for (const id of ["f-project", "f-agent", "f-mine"]) el(id).addEventListener("change", () => { lastState = new Map(); load(); });
+      let t;
+      el("f-q").addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { lastState = new Map(); load(); }, 250); });
+      await load();
+      setInterval(() => { if (!document.hidden && !dragging) load(); }, 5000);
+    }
+    init();
+  </script>
+</body>
+</html>

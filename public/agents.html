@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flaretown · Agents</title>
+  <link rel="stylesheet" href="/ui.css">
+  <style>
+    .tier { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); }
+    .tier.principal { border-color: var(--accent); color: var(--accent); }
+    td.indent { padding-left: 32px; }
+    #f-parent-row[hidden] { display: none; }
+  </style>
+  <script src="/nav.js" defer></script>
+</head>
+<body>
+  <div class="layout">
+    <main>
+      <div class="inner">
+        <header>
+          <h1>Agents</h1>
+          <div class="actions"><button class="primary" id="new-agent">+ New agent</button></div>
+        </header>
+        <div id="list"></div>
+      </div>
+    </main>
+    <aside id="panel" hidden>
+      <div class="head">
+        <h2 id="panel-title"></h2>
+        <button class="close-panel" id="close-panel" aria-label="Close panel">×</button>
+      </div>
+      <div id="panel-body"></div>
+    </aside>
+  </div>
+
+  <script>
+    const el = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+    let agents = [];
+    let models = [];
+    // Container images (task 014): [{ name, description, default_instance, desktop }]
+    let images = [{ name: "debian", description: "Debian with Node.js and npm", default_instance: "lite" }];
+    const INSTANCES = ["lite", "basic", "standard-1", "standard-2", "standard-3", "standard-4"];
+    const imageLabel = (i) => i.name === "debian" ? "Debian (Node, npm)" : i.name === "desktop" ? "Desktop (Chromium, noVNC)" : `Custom: ${i.name}`;
+    let selectedId = null;
+    const modelName = (id) => models.find((m) => m.id === id)?.name ?? id;
+    const nameOf = (id) => agents.find((a) => a.id === id)?.name ?? id ?? "";
+
+    async function apiCall(method, url, body) {
+      const res = await fetch(url, { method, headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined });
+      const data = await res.json();
+      if (!res.ok) throw new Error(`${data.error}${data.hint ? ` (${data.hint})` : ""}`);
+      return data;
+    }
+
+    function showPanel(title, html) {
+      el("panel-title").textContent = title;
+      el("panel-body").innerHTML = html;
+      el("panel").hidden = false;
+    }
+    function closePanel() {
+      el("panel").hidden = true;
+      selectedId = null;
+      render();
+    }
+    el("close-panel").addEventListener("click", closePanel);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !el("panel").hidden) closePanel(); });
+
+    // Hierarchy order: Principal, then each Lead followed by its Operators.
+    function ordered() {
+      const principal = agents.filter((a) => a.tier === "principal");
+      const leads = agents.filter((a) => a.tier === "lead");
+      return [...principal, ...leads.flatMap((l) => [l, ...agents.filter((a) => a.tier === "operator" && a.parent_id === l.id)])];
+    }
+
+    function render() {
+      el("list").innerHTML = `<table><thead><tr><th>Name</th><th>Type</th><th>Reports to</th><th>Model</th><th>Code Mode</th><th>Sandbox</th><th>Open tasks</th></tr></thead><tbody>${
+        ordered().map((a) => `<tr data-id="${esc(a.id)}" class="${a.id === selectedId ? "selected" : ""}">
+          <td class="${a.tier === "operator" ? "indent" : ""}"><strong>${esc(a.name)}</strong> <span class="id">${esc(a.id)}</span></td>
+          <td><span class="tier ${a.tier}">${esc(a.tier)}</span></td>
+          <td>${a.parent_id ? esc(nameOf(a.parent_id)) : "Human"}</td>
+          <td class="meta">${esc(modelName(a.model))}</td>
+          <td class="meta">${a.code_mode ? "On" : "Off"}</td>
+          <td class="meta">${a.sandbox_enabled ? `On${a.sandbox_internet ? " · Internet" : ""}${a.sandbox_persist ? " · Persist" : ""}` : "Off"}</td>
+          <td>${a.open_tasks}</td>
+        </tr>`).join("")
+      }</tbody></table>`;
+      document.querySelectorAll("tbody tr").forEach((tr) => tr.addEventListener("click", () => openDetails(tr.dataset.id)));
+    }
+
+    async function load() {
+      const [a, m] = await Promise.all([(await fetch("/api/agents")).json(), (await fetch("/api/models")).json()]);
+      agents = a.agents ?? [];
+      models = m.models ?? [];
+      try {
+        const imgs = await (await fetch("/api/containers/images")).json();
+        if (imgs.images?.length) images = imgs.images;
+      } catch { /* keep the stock image only */ }
+      render();
+    }
+
+    // ---- New agent ------------------------------------------------------------------------
+    const DEFAULT_MODEL = { lead: "@cf/moonshotai/kimi-k2.6", operator: "@cf/moonshotai/kimi-k2.7-code" };
+
+    function openNewAgent() {
+      selectedId = null;
+      render();
+      const leads = agents.filter((a) => a.tier === "lead");
+      showPanel("New agent", `
+        <form id="new-form">
+          <label for="f-name">Name</label>
+          <input id="f-name" required placeholder="e.g. Reports">
+
+          <label>Type</label>
+          <div class="segmented" id="f-type">
+            <button type="button" data-type="lead" class="active">Lead</button>
+            <button type="button" data-type="operator">Operator</button>
+          </div>
+          <div class="meta" id="f-type-hint">A Lead owns an area and reports to the Principal.</div>
+
+          <div id="f-parent-row" hidden>
+            <label for="f-parent">Under which Lead</label>
+            <select id="f-parent">${leads.length
+              ? leads.map((l) => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join("")
+              : `<option value="">No Leads yet: create a Lead first</option>`}</select>
+          </div>
+
+          <label for="f-area">Area</label>
+          <input id="f-area" placeholder="What it owns, e.g. status reports">
+
+          <label for="f-model">Model</label>
+          <select id="f-model">${models.map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join("")}</select>
+          <label style="display:flex;align-items:center;gap:8px;color:var(--fg)"><input type="checkbox" id="f-codemode" style="width:auto"> Code Mode <span class="meta">(exec tool, needs the global switch in Orchestrator)</span></label>
+          <label for="f-image">Container</label>
+          <select id="f-image"><option value="">None</option>${images.map((i) => `<option value="${esc(i.name)}">${esc(imageLabel(i))}</option>`).join("")}</select>
+          <div id="f-container-opts" hidden>
+            <label for="f-instance">Instance</label>
+            <select id="f-instance">${INSTANCES.map((t) => `<option>${t}</option>`).join("")}</select>
+            <label style="display:flex;align-items:center;gap:8px;color:var(--fg)"><input type="checkbox" id="f-sandbox-internet" style="width:auto"> Internet</label>
+            <label style="display:flex;align-items:center;gap:8px;color:var(--fg);margin-top:4px"><input type="checkbox" id="f-sandbox-persist" style="width:auto"> Keep files across restarts</label>
+          </div>
+          <div class="meta">A Linux container for the agent (billable while it runs). Needs the Sandbox switch in Settings.</div>
+
+          <div class="error" id="f-error"></div>
+          <div class="form-actions"><button type="submit" class="primary" id="f-submit">Create agent</button></div>
+        </form>`);
+
+      let type = "lead";
+      el("f-model").value = DEFAULT_MODEL.lead;
+      el("f-codemode").checked = false;
+      // Container: options show once an image is picked; the instance defaults to the image's.
+      el("f-image").addEventListener("change", () => {
+        const img = images.find((i) => i.name === el("f-image").value);
+        el("f-container-opts").hidden = !img;
+        if (img) el("f-instance").value = img.default_instance;
+      });
+      const hints = { lead: "A Lead owns an area and reports to the Principal.", operator: "An Operator does the work and reports to a Lead." };
+      document.querySelectorAll("#f-type button").forEach((b) => b.addEventListener("click", () => {
+        type = b.dataset.type;
+        document.querySelectorAll("#f-type button").forEach((x) => x.classList.toggle("active", x === b));
+        el("f-type-hint").textContent = hints[type];
+        el("f-parent-row").hidden = type !== "operator";
+        el("f-model").value = DEFAULT_MODEL[type];
+        el("f-codemode").checked = type === "operator";
+      }));
+      el("f-name").focus();
+
+      el("new-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const submit = el("f-submit");
+        if (submit.disabled) return;
+        submit.disabled = true;
+        submit.textContent = "Creating…";
+        el("f-error").textContent = "";
+        try {
+          const agent = await apiCall("POST", "/api/agents", {
+            name: el("f-name").value,
+            type,
+            parent_id: type === "operator" ? el("f-parent").value : undefined,
+            area: el("f-area").value,
+            model: el("f-model").value,
+            code_mode: el("f-codemode").checked,
+            sandbox_enabled: Boolean(el("f-image").value),
+            sandbox_internet: el("f-sandbox-internet").checked,
+            sandbox_persist: el("f-sandbox-persist").checked,
+            ...(el("f-image").value ? { container_image: el("f-image").value, container_instance: el("f-instance").value } : {}),
+          });
+          await load();
+          openDetails(agent.id);
+        } catch (err) {
+          el("f-error").textContent = err.message;
+          submit.disabled = false;
+          submit.textContent = "Create agent";
+        }
+      });
+    }
+    el("new-agent").addEventListener("click", openNewAgent);
+
+    // ---- Details --------------------------------------------------------------------------
+    function openDetails(id) {
+      selectedId = id;
+      render();
+      const a = agents.find((x) => x.id === id);
+      if (!a) return;
+      const operators = agents.filter((x) => x.parent_id === a.id && x.tier === "operator");
+      showPanel(a.name, `
+        <div class="meta">${esc(a.tier)} · ${esc(a.id)}</div>
+        <label>Reports to</label><div>${a.parent_id ? esc(nameOf(a.parent_id)) : "Human"}</div>
+        ${a.area ? `<label>Area</label><div>${esc(a.area)}</div>` : ""}
+        <label>Model</label><div>${esc(modelName(a.model))}</div>
+        <label>Code Mode</label>
+        <label style="display:flex;align-items:center;gap:8px;color:var(--fg);margin-top:0"><input type="checkbox" id="d-codemode" style="width:auto" ${a.code_mode ? "checked" : ""} ${a.status === "retired" ? "disabled" : ""}> exec tool <span class="meta">(needs the global switch in Orchestrator)</span></label>
+        <label>Container</label>
+        ${[["sandbox_enabled", "Container"], ["sandbox_internet", "Internet"], ["sandbox_persist", "Keep files across restarts"]].map(([k, text]) =>
+          `<label style="display:flex;align-items:center;gap:8px;color:var(--fg);margin-top:0"><input type="checkbox" class="d-sbx" data-key="${k}" style="width:auto" ${a[k] ? "checked" : ""} ${a.status === "retired" ? "disabled" : ""}> ${text}</label>`).join("")}
+        ${a.sandbox_enabled ? `<div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div><label for="d-image">Image</label><select id="d-image" class="d-cnt" data-key="container_image">${images.map((i) => `<option value="${esc(i.name)}" ${i.name === a.container_image ? "selected" : ""}>${esc(imageLabel(i))}</option>`).join("")}</select></div>
+          <div><label for="d-instance">Instance</label><select id="d-instance" class="d-cnt" data-key="container_instance"><option value="">Default (${esc((images.find((i) => i.name === a.container_image) ?? {}).default_instance ?? "")})</option>${INSTANCES.map((t) => `<option ${t === a.container_instance ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+        </div>` : ""}
+        <div class="meta">Needs the Sandbox switch in Settings. Changing image, instance or Internet restarts the container. <a href="/containers.html">Containers</a></div>
+        <label>Open tasks</label><div>${a.open_tasks}</div>
+        ${a.tier === "lead" ? `<label>Operators</label><div>${operators.map((o) => esc(o.name)).join(", ") || "None"}</div>` : ""}
+        <div class="form-actions">
+          <a class="ghost" href="/chat.html?agent=${encodeURIComponent(a.id)}">Open chat →</a>
+          ${a.tier === "principal" ? "" : `<button class="ghost danger" id="d-delete">Delete</button>`}
+        </div>
+        <div class="error" id="d-error"></div>`);
+
+      el("d-codemode")?.addEventListener("change", async (e) => {
+        const box = e.target;
+        box.disabled = true;
+        el("d-error").textContent = "";
+        try {
+          await apiCall("PATCH", `/api/agents/${encodeURIComponent(a.id)}/config`, { code_mode: box.checked });
+          await load();
+          openDetails(a.id);
+        } catch (err) {
+          box.checked = !box.checked;
+          box.disabled = false;
+          el("d-error").textContent = err.message;
+        }
+      });
+
+      document.querySelectorAll(".d-cnt").forEach((sel) => sel.addEventListener("change", async () => {
+        sel.disabled = true;
+        el("d-error").textContent = "";
+        try {
+          await apiCall("PATCH", `/api/agents/${encodeURIComponent(a.id)}/config`, { [sel.dataset.key]: sel.value || null });
+          await load();
+          openDetails(a.id);
+        } catch (err) {
+          sel.disabled = false;
+          el("d-error").textContent = err.message;
+        }
+      }));
+
+      document.querySelectorAll(".d-sbx").forEach((box) => box.addEventListener("change", async () => {
+        box.disabled = true;
+        el("d-error").textContent = "";
+        try {
+          await apiCall("PATCH", `/api/agents/${encodeURIComponent(a.id)}/config`, { [box.dataset.key]: box.checked });
+          await load();
+          openDetails(a.id);
+        } catch (err) {
+          box.checked = !box.checked;
+          box.disabled = false;
+          el("d-error").textContent = err.message;
+        }
+      }));
+
+      el("d-delete")?.addEventListener("click", async () => {
+        if (!confirm(`Delete ${a.name}? Its open tasks go back to ${a.parent_id ? nameOf(a.parent_id) : "its parent"}.`)) return;
+        const btn = el("d-delete");
+        btn.disabled = true;
+        btn.textContent = "Deleting…";
+        try {
+          await apiCall("DELETE", `/api/agents/${encodeURIComponent(a.id)}`);
+          await load();
+          closePanel();
+        } catch (err) {
+          el("d-error").textContent = err.message;
+          btn.disabled = false;
+          btn.textContent = "Delete";
+        }
+      });
+    }
+
+    load();
+  </script>
+</body>
+</html>

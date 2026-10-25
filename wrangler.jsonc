@@ -1,0 +1,87 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "flaretown",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-10-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"observability": {
+		"enabled": true
+	},
+	// No preview URLs: every hostname must be behind Access (LESSONS-LEARNED.md)
+	"preview_urls": false,
+	// Bundles the chat client into public/chat.js before dev and deploy
+	"build": {
+		"command": "pnpm build:client"
+	},
+	// Workers AI (SPEC-models.md)
+	"ai": {
+		"binding": "AI"
+	},
+	"durable_objects": {
+		"bindings": [
+			{ "name": "PRINCIPAL", "class_name": "Principal" },
+			{ "name": "LEAD", "class_name": "Lead" },
+			{ "name": "OPERATOR", "class_name": "Operator" },
+			{ "name": "ORCHESTRATOR", "class_name": "Orchestrator" },
+			{ "name": "SCHEDULER", "class_name": "Scheduler" }
+		]
+	},
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["Principal"] },
+		{ "tag": "v2", "new_sqlite_classes": ["Lead", "Operator", "Orchestrator"] },
+		{ "tag": "v3", "new_sqlite_classes": ["Scheduler"] }
+	],
+	// Sandbox per agent (task 013, SPEC-sandbox): one container on each agent's Durable Object.
+	// The agent picks the image and instance type in start() (scheduling_policy durable_object
+	// doesn't accept instance_type or max_instances here). Limits: the sandbox_max_* settings
+	// (Orchestrator). Workers Paid, billable per 10 ms active.
+	"containers": [
+		// images: built from Dockerfiles at deploy (Docker must run). Add custom images to all three
+		// entries (containers/README.md). The stock "debian" image is not listed: it's a registry image.
+		{ "name": "flaretown-principal-sandbox", "class_name": "Principal", "scheduling_policy": "durable_object", "images": { "desktop": { "dockerfile": "./containers/desktop/Dockerfile" } } },
+		{ "name": "flaretown-lead-sandbox", "class_name": "Lead", "scheduling_policy": "durable_object", "images": { "desktop": { "dockerfile": "./containers/desktop/Dockerfile" } } },
+		{ "name": "flaretown-operator-sandbox", "class_name": "Operator", "scheduling_policy": "durable_object", "images": { "desktop": { "dockerfile": "./containers/desktop/Dockerfile" } } }
+	],
+	// Code Mode: sandboxed Dynamic Workers for the exec tool (task 012, Workers Paid, billable)
+	"worker_loaders": [
+		{ "binding": "LOADER" }
+	],
+	// One git repo per agent (Cloudflare Artifacts, Workers Paid). SPEC-agents 5.1.
+	"artifacts": [
+		{ "binding": "ARTIFACTS_REPOS", "namespace": "default" }
+	],
+	// Task deliverables (reports). Layout: agents/<agent-id>/tasks/<identifier>/<file>
+	"r2_buckets": [
+		{ "binding": "ARTIFACTS", "bucket_name": "flaretown-artifacts" }
+	],
+	// Worker version id, reported by /api/health
+	"version_metadata": {
+		"binding": "CF_VERSION_METADATA"
+	},
+	// Static UI. The Worker runs first only for /api/* and /mcp/*.
+	"assets": {
+		"directory": "./public",
+		"binding": "ASSETS",
+		"run_worker_first": [
+			"/api/*",
+			"/mcp/*",
+			"/container/*"
+		]
+	},
+	// No database_id on purpose: Wrangler (and the Deploy button) provisions the databases in each
+	// account by name. Never commit account-specific ids.
+	"d1_databases": [
+		{
+			"binding": "DB_CORE",
+			"database_name": "flaretown-core",
+			"migrations_dir": "migrations/core"
+		},
+		{
+			"binding": "DB_RUNS",
+			"database_name": "flaretown-runs",
+			"migrations_dir": "migrations/runs"
+		}
+	]
+}

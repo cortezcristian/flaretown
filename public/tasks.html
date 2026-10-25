@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flaretown · Tasks</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f7f8; --fg: #18181b; --muted: #6b6b76; --card: #ffffff;
+      --border: #e4e4e7; --accent: #f6821f; --ok: #16a34a; --bad: #dc2626;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0f0f12; --fg: #f4f4f5; --muted: #a1a1aa; --card: #18181d; --border: #2a2a31; --ok: #4ade80; --bad: #f87171; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    a { color: var(--accent); text-decoration: none; }
+    .layout { display: flex; min-height: 100vh; }
+    main { flex: 1; min-width: 0; padding: 16px; }
+    .inner { max-width: 860px; margin: 0 auto; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+    h1 { font-size: 20px; margin: 0; }
+    .actions { display: flex; align-items: center; gap: 12px; }
+    .primary { border: 0; background: var(--accent); color: #fff; border-radius: 8px; padding: 6px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+    .ghost { border: 1px solid var(--border); background: var(--card); color: var(--fg); border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
+    .danger { color: var(--bad); }
+    .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+    .tabs button { border: 1px solid var(--border); background: var(--card); color: var(--fg); border-radius: 999px; padding: 4px 12px; font: inherit; cursor: pointer; }
+    .tabs button.active { border-color: var(--accent); color: var(--accent); }
+    .count { color: var(--muted); margin-left: 6px; }
+    table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 14px; }
+    th { color: var(--muted); font-weight: 500; }
+    tbody tr { cursor: pointer; }
+    tbody tr:hover, tbody tr.selected { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+    tr:last-child td { border-bottom: 0; }
+    .id { font-family: ui-monospace, monospace; color: var(--muted); white-space: nowrap; }
+    .state { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+    .done { color: var(--ok); }
+    .empty { color: var(--muted); padding: 24px; text-align: center; }
+
+    /* Right context panel (collapsible) */
+    aside { width: 400px; flex: none; border-left: 1px solid var(--border); background: var(--card); padding: 16px; overflow-y: auto; max-height: 100vh; position: sticky; top: 0; }
+    aside[hidden] { display: none; }
+    aside .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    aside h2 { font-size: 16px; margin: 0; }
+    .close-panel { border: 0; background: none; color: var(--muted); font-size: 20px; cursor: pointer; line-height: 1; }
+    label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+    input, textarea, select { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; }
+    textarea { resize: vertical; min-height: 90px; }
+    .criteria-row { display: flex; gap: 6px; margin-bottom: 6px; }
+    .criteria-row button { flex: none; width: 34px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); border-radius: 8px; cursor: pointer; }
+    .form-actions { display: flex; gap: 8px; margin-top: 16px; }
+    .error { color: var(--bad); font-size: 13px; margin-top: 8px; }
+    .segmented { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .segmented button { flex: 1; border: 0; background: var(--bg); color: var(--fg); padding: 7px; font: inherit; font-size: 14px; cursor: pointer; }
+    .segmented button.active { background: var(--accent); color: #fff; }
+    .primary:disabled { opacity: .6; cursor: progress; }
+    .meta { font-size: 13px; color: var(--muted); }
+    .criteria-list { list-style: none; padding: 0; margin: 0; }
+    .criteria-list li { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; }
+    .criteria-list input { width: auto; margin-top: 4px; }
+    .comment { border-top: 1px solid var(--border); padding: 8px 0; font-size: 14px; }
+    .comment .meta { margin-bottom: 2px; }
+    td.sub { padding-left: 24px; color: var(--muted); }
+    .report { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font: 13px/1.5 ui-monospace, monospace; max-height: 50vh; overflow: auto; }
+    @media (max-width: 800px) {
+      aside { position: fixed; inset: auto 0 0 0; width: auto; max-height: 75vh; border-left: 0; border-top: 1px solid var(--border); border-radius: 12px 12px 0 0; }
+    }
+  </style>
+  <script src="/nav.js" defer></script>
+</head>
+<body>
+  <div class="layout">
+    <main>
+      <div class="inner">
+        <header>
+          <h1>Tasks</h1>
+          <div class="actions">
+            <button class="primary" id="new-task">+ New task</button>
+          </div>
+        </header>
+        <div class="tabs">
+          <button data-filter="open">Open<span class="count" id="c-open"></span></button>
+          <button data-filter="done">Done<span class="count" id="c-done"></span></button>
+          <button data-filter="all">All<span class="count" id="c-all"></span></button>
+        </div>
+        <div id="list"></div>
+      </div>
+    </main>
+
+    <aside id="panel" hidden>
+      <div class="head">
+        <h2 id="panel-title"></h2>
+        <button class="close-panel" id="close-panel" aria-label="Close panel">×</button>
+      </div>
+      <div id="panel-body"></div>
+    </aside>
+  </div>
+
+  <script src="/task-panel.js"></script>
+  <script>
+    const el = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+    let filter = new URLSearchParams(location.search).get("filter") || "open";
+    let selectedId = null;
+
+    // ---- list ----------------------------------------------------------------------------
+    async function loadList() {
+      document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.filter === filter));
+      const data = await (await fetch(`/api/tasks?filter=${filter}`)).json();
+      el("c-open").textContent = data.counts?.open ?? 0;
+      el("c-done").textContent = data.counts?.done ?? 0;
+      el("c-all").textContent = data.counts?.all ?? 0;
+      if (!data.tasks?.length) {
+        el("list").innerHTML = `<div class="empty">No tasks yet. Create one or ask the Principal.</div>`;
+        return;
+      }
+      // Subtasks go right under their parent when both are in the list.
+      const byId = new Map(data.tasks.map((t) => [t.id, t]));
+      const ordered = [];
+      for (const t of data.tasks) {
+        if (t.parent_id && byId.has(t.parent_id)) continue;
+        ordered.push(t);
+        for (const c of data.tasks) if (c.parent_id === t.id) ordered.push(c);
+      }
+      el("list").innerHTML = `<table><thead><tr><th>ID</th><th>Title</th><th>Agent</th><th>Criteria</th><th>State</th><th>Updated</th></tr></thead><tbody>${
+        ordered.map((t) => `<tr data-id="${esc(t.id)}" class="${t.id === selectedId ? "selected" : ""}">
+          <td class="id">${t.parent_id ? "↳ " : ""}${esc(t.identifier)}</td>
+          <td class="${t.parent_id ? "sub" : ""}">${esc(t.title)}</td>
+          <td class="meta">${esc(t.assignee || "unassigned")}</td>
+          <td class="${t.criteria_total && t.criteria_checked === t.criteria_total ? "done" : ""}">${t.criteria_checked}/${t.criteria_total}</td>
+          <td><span class="state">${esc(t.state.replace("_", " "))}</span></td>
+          <td>${new Date(t.updated_at).toLocaleString()}</td>
+        </tr>`).join("")
+      }</tbody></table>`;
+      document.querySelectorAll("tbody tr").forEach((tr) => tr.addEventListener("click", () => openDetails(tr.dataset.id)));
+    }
+
+    // New task form and task details live in /task-panel.js (shared with Kanban).
+    TaskPanel.init({
+      onChange: () => loadList(),
+      onSelect: (id) => {
+        selectedId = id;
+        document.querySelectorAll("tbody tr").forEach((tr) => tr.classList.toggle("selected", tr.dataset.id === id));
+      },
+    });
+    const openDetails = (id) => TaskPanel.openDetails(id);
+    el("new-task").addEventListener("click", () => TaskPanel.openNewTask());
+
+    document.querySelectorAll(".tabs button").forEach((b) =>
+      b.addEventListener("click", () => {
+        filter = b.dataset.filter;
+        history.replaceState(null, "", `?filter=${filter}`);
+        loadList();
+      }),
+    );
+    loadList();
+    // Keep states fresh while the page is open (real-time comes later).
+    setInterval(() => { if (!document.hidden) loadList(); }, 5000);
+  </script>
+</body>
+</html>

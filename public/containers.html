@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flaretown · Containers</title>
+  <link rel="stylesheet" href="/ui.css">
+  <style>
+    .inner.wide { max-width: 1200px; }
+    .limits { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .pill { font-size: 13px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); }
+    .pill.full { border-color: var(--accent); color: var(--accent); }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
+    .dot.on { background: var(--ok); }
+    td .ghost { padding: 3px 10px; font-size: 13px; }
+    .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .warn { padding: 8px 12px; border-radius: 8px; margin-bottom: 12px; background: color-mix(in srgb, var(--accent) 10%, transparent); font-size: 14px; }
+    tbody tr { cursor: default; }
+  </style>
+  <script src="/nav.js" defer></script>
+</head>
+<body>
+  <div class="layout">
+    <main>
+      <div class="inner wide">
+        <header>
+          <h1>Containers</h1>
+          <div class="actions"><a class="ghost" href="/orchestrator.html">Limits in Settings</a></div>
+        </header>
+        <div id="global"></div>
+        <div class="limits" id="limits"></div>
+        <div class="tabs">
+          <button data-filter="all">All<span class="count" id="c-all"></span></button>
+          <button data-filter="running">Running<span class="count" id="c-running"></span></button>
+        </div>
+        <div class="error" id="error"></div>
+        <div id="list"><div class="empty">Loading…</div></div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const el = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+    const when = (iso) => (iso ? new Date(iso).toLocaleString() : "—");
+    const size = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+    let filter = new URLSearchParams(location.search).get("filter") || "all";
+    let data = null;
+
+    async function api(method, url) {
+      const res = await fetch(url, { method });
+      const body = await res.json();
+      if (!res.ok || body.ok === false) throw new Error(body.error ? `${body.error}${body.hint ? ` (${body.hint})` : ""}` : `HTTP ${res.status}`);
+      return body;
+    }
+
+    function render() {
+      const rows = data.containers.filter((c) => filter === "all" || c.status.running);
+      el("c-all").textContent = data.containers.length;
+      el("c-running").textContent = data.containers.filter((c) => c.status.running).length;
+      document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.filter === filter));
+      el("global").innerHTML = data.global_enabled ? "" : `<div class="warn">Sandbox is off globally: no container can start. Turn it on in <a href="/orchestrator.html">Settings</a>.</div>`;
+      const label = { principal: "Principal", lead: "Leads", operator: "Operators" };
+      el("limits").innerHTML = Object.entries(data.tiers)
+        .map(([t, v]) => `<span class="pill ${v.running >= v.max ? "full" : ""}">${label[t]}: ${v.running}/${v.max} running</span>`).join("");
+      if (!rows.length) {
+        el("list").innerHTML = `<div class="empty">${filter === "running" ? "Nothing running." : "No agent has a container. Turn it on in an agent's Config or when creating it."}</div>`;
+        return;
+      }
+      el("list").innerHTML = `<table><thead><tr><th>Agent</th><th>Image</th><th>Status</th><th>Last used</th><th>Settings</th><th>Saved</th><th></th></tr></thead><tbody>${
+        rows.map((c) => {
+          const s = c.status;
+          if (s.error) return `<tr><td>${esc(c.agent.name)}</td><td colspan="6" class="error">${esc(s.error)}</td></tr>`;
+          return `<tr data-id="${esc(c.agent.id)}">
+            <td><a href="/chat.html?agent=${encodeURIComponent(c.agent.id)}&panel=container">${esc(c.agent.name)}</a> <span class="meta">${esc(c.agent.tier)}</span></td>
+            <td>${esc(s.image)} <span class="meta">${esc(s.instance)}</span></td>
+            <td><span class="dot ${s.running ? "on" : ""}"></span>${s.running ? `running <span class="meta">since ${when(s.started_at)}</span>` : "stopped"}</td>
+            <td class="meta">${when(c.last_used_at)}</td>
+            <td class="meta">${s.enabled ? "" : "disabled · "}Internet ${s.internet ? "on" : "off"} · Keep files ${s.persist ? "on" : "off"}</td>
+            <td class="meta">${s.snapshot ? `files ${size(s.snapshot.size)}` : "no files"}${s.desktop ? ` · profile ${s.profile ? `${size(s.profile.size)}, ${when(s.profile.at)}` : "none"}` : ""}</td>
+            <td><div class="row-actions">
+              ${s.desktop ? `<a class="ghost" href="/container/${encodeURIComponent(c.agent.id)}/view" target="_blank" rel="noopener">Open desktop</a>` : ""}
+              ${s.running ? `<button class="ghost danger" data-act="stop">Stop</button>` : ""}
+              <button class="ghost" data-act="reset">Reset files</button>
+              ${s.desktop ? `<button class="ghost" data-act="reset-profile">Reset browser profile</button>` : ""}
+            </div></td></tr>`;
+        }).join("")
+      }</tbody></table>`;
+      const confirmText = {
+        stop: "Stop this container? The browser profile and (with Keep files) its files are saved first.",
+        reset: "Stop the container and delete its saved files?",
+        "reset-profile": "Delete the saved browser profile?",
+      };
+      el("list").querySelectorAll("[data-act]").forEach((btn) => btn.addEventListener("click", async () => {
+        const id = btn.closest("tr").dataset.id;
+        if (!confirm(confirmText[btn.dataset.act])) return;
+        btn.disabled = true;
+        btn.textContent = "Working…";
+        el("error").textContent = "";
+        try {
+          await api("POST", `/api/containers/${encodeURIComponent(id)}/${btn.dataset.act}`);
+        } catch (err) {
+          el("error").textContent = err.message;
+        }
+        load();
+      }));
+    }
+
+    async function load() {
+      try {
+        data = await api("GET", "/api/containers");
+        render();
+      } catch (err) {
+        el("list").innerHTML = `<div class="empty error">${esc(err.message)}</div>`;
+      }
+    }
+    document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => {
+      filter = b.dataset.filter;
+      history.replaceState(null, "", filter === "all" ? location.pathname : `?filter=${filter}`);
+      render();
+    }));
+    load();
+    setInterval(load, 15000);
+  </script>
+</body>
+</html>

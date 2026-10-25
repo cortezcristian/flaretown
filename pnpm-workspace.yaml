@@ -1,0 +1,6 @@
+allowBuilds:
+  '@mongodb-js/zstd': set this to true or false
+  core-js-pure: set this to true or false
+  esbuild: true
+  node-liblzma: set this to true or false
+  workerd: true

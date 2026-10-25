@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flaretown · Settings</title>
+  <link rel="stylesheet" href="/ui.css">
+  <style>
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+    .card h2 { font-size: 15px; margin: 0 0 8px; }
+    .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .card-head h2 { margin: 0; }
+    #s-error:empty { display: none; }
+    #s-error { margin: 0 0 12px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+    .switch { display: flex; align-items: center; gap: 10px; }
+    .switch input { width: auto; }
+    .stat { font-size: 13px; color: var(--muted); }
+    .stat b { color: var(--fg); font-weight: 600; }
+    .on { color: var(--ok); } .off { color: var(--muted); }
+  </style>
+  <script src="/nav.js" defer></script>
+</head>
+<body>
+  <div class="layout">
+    <main>
+      <div class="inner">
+        <header>
+          <h1>Settings</h1>
+          <div class="actions"><button type="submit" form="settings" class="primary" id="s-save">Save</button></div>
+        </header>
+        <div class="error" id="s-error"></div>
+
+        <form id="settings">
+          <div class="card">
+            <h2>Orchestrator</h2>
+            <label class="switch"><input type="checkbox" id="s-enabled"> <span>Enabled <span class="meta">(off: queued tasks stay in todo)</span></span></label>
+            <div class="grid">
+              <div><label for="s-poll">Poll interval (seconds)</label><input id="s-poll" type="number" min="30" max="3600" step="1"></div>
+              <div><label for="s-max">Max concurrent per agent</label><input id="s-max" type="number" min="1" max="5" step="1"></div>
+              <div><label for="s-stall">Stall timeout (minutes)</label><input id="s-stall" type="number" min="1" max="1440" step="1"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Sandbox</h2>
+            <label class="switch"><input type="checkbox" id="s-codemode"> <span>Code Mode <span class="meta">(exec tool on Dynamic Workers, billable. Off: no agent gets it)</span></span></label>
+            <label class="switch"><input type="checkbox" id="s-sandbox"> <span>Sandbox <span class="meta">(a Linux container per agent, Containers, billable. Off: no agent gets one)</span></span></label>
+            <div class="grid">
+              <div><label for="s-sbx-principal">Max running sandboxes: Principal</label><input id="s-sbx-principal" type="number" min="0" max="1" step="1"></div>
+              <div><label for="s-sbx-leads">Leads</label><input id="s-sbx-leads" type="number" min="0" max="5" step="1"></div>
+              <div><label for="s-sbx-operators">Operators</label><input id="s-sbx-operators" type="number" min="0" max="25" step="1"></div>
+            </div>
+          </div>
+        </form>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>Status</h2>
+            <button type="button" class="ghost" id="tick">Tick now</button>
+          </div>
+          <div class="grid" id="status"></div>
+          <h2 style="margin-top:16px">Running now</h2>
+          <div id="running"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const el = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+    const when = (iso) => (iso ? new Date(iso).toLocaleString() : "—");
+
+    async function apiCall(method, url, body) {
+      const res = await fetch(url, { method, headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined });
+      const data = await res.json();
+      if (!res.ok) throw new Error(`${data.error}${data.hint ? ` (${data.hint})` : ""}`);
+      return data;
+    }
+
+    function renderStatus({ settings, status }) {
+      const t = status.last_tick;
+      el("status").innerHTML = `
+        <div class="stat">State<br><b class="${settings.enabled ? "on" : "off"}">${settings.enabled ? "On" : "Off"}</b></div>
+        <div class="stat">Last tick<br><b>${when(t?.at)}</b>${t ? ` <span class="meta">(${esc(t.reason)})</span>` : ""}</div>
+        <div class="stat">Next tick<br><b>${settings.enabled ? when(status.next_tick_at) : "—"}</b></div>
+        <div class="stat">Last tick dispatched<br><b>${t?.dispatched?.length ? esc(t.dispatched.join(", ")) : "none"}</b></div>
+        <div class="stat">Waiting (agent busy)<br><b>${t?.skipped_busy?.length ? esc(t.skipped_busy.join(", ")) : "none"}</b></div>
+        <div class="stat">Stalled<br><b>${t?.stalled?.length ? esc(t.stalled.join(", ")) : "none"}</b></div>`;
+      el("running").innerHTML = status.running.length
+        ? `<table><thead><tr><th>Task</th><th>Agent</th><th>Last activity</th></tr></thead><tbody>${status.running.map((r) => `
+            <tr><td><span class="id">${esc(r.identifier)}</span> ${esc(r.title)}</td><td>${esc(r.assignee)}</td><td>${when(r.updated_at)}</td></tr>`).join("")}</tbody></table>`
+        : `<div class="meta">Nothing in progress.</div>`;
+    }
+
+    function fillForm({ settings }) {
+      el("s-enabled").checked = settings.enabled;
+      el("s-codemode").checked = settings.code_mode_enabled;
+      el("s-sandbox").checked = settings.sandbox_global_enabled;
+      el("s-sbx-principal").value = settings.sandbox_max_principal;
+      el("s-sbx-leads").value = settings.sandbox_max_leads;
+      el("s-sbx-operators").value = settings.sandbox_max_operators;
+      el("s-poll").value = settings.poll_interval_s;
+      el("s-max").value = settings.max_concurrent_per_agent;
+      el("s-stall").value = settings.stall_timeout_min;
+    }
+
+    async function load(fill = false) {
+      const data = await apiCall("GET", "/api/orchestrator");
+      if (fill) fillForm(data);
+      renderStatus(data);
+    }
+
+    el("settings").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const btn = el("s-save");
+      if (btn.disabled) return;
+      btn.disabled = true;
+      btn.textContent = "Saving…";
+      el("s-error").textContent = "";
+      try {
+        const data = await apiCall("PATCH", "/api/orchestrator", {
+          enabled: el("s-enabled").checked,
+          code_mode_enabled: el("s-codemode").checked,
+          sandbox_global_enabled: el("s-sandbox").checked,
+          sandbox_max_principal: Number(el("s-sbx-principal").value),
+          sandbox_max_leads: Number(el("s-sbx-leads").value),
+          sandbox_max_operators: Number(el("s-sbx-operators").value),
+          poll_interval_s: Number(el("s-poll").value),
+          max_concurrent_per_agent: Number(el("s-max").value),
+          stall_timeout_min: Number(el("s-stall").value),
+        });
+        fillForm(data);
+        renderStatus(data);
+      } catch (err) {
+        el("s-error").textContent = err.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Save";
+      }
+    });
+
+    el("tick").addEventListener("click", async () => {
+      const btn = el("tick");
+      if (btn.disabled) return;
+      btn.disabled = true;
+      btn.textContent = "Ticking…";
+      try {
+        await apiCall("POST", "/api/orchestrator/tick");
+        await load();
+      } catch (err) {
+        el("s-error").textContent = err.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Tick now";
+      }
+    });
+
+    load(true);
+    setInterval(() => { if (!document.hidden) load(); }, 5000);
+  </script>
+</body>
+</html>

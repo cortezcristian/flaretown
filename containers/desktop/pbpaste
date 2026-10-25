@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# macOS-style pbpaste: X clipboard -> stdout (includes text pasted in noVNC's clipboard panel).
+exec xclip -selection clipboard -out -display "${DISPLAY:-:1}" 2>/dev/null

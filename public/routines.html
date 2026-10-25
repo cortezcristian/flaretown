@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flaretown · Routines</title>
+  <link rel="stylesheet" href="/ui.css">
+  <style>
+    .sched-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .preview { margin-top: 6px; font-size: 13px; color: var(--muted); }
+    .preview b { color: var(--fg); font-weight: 600; }
+    .off { color: var(--muted); }
+    td .run { padding: 3px 10px; font-size: 13px; }
+    .switch { display: flex; align-items: center; gap: 8px; margin-top: 12px; color: var(--fg); }
+    .switch input { width: auto; }
+    .status-started { color: var(--ok); } .status-skipped { color: var(--muted); } .status-failed { color: var(--bad); }
+  </style>
+  <script src="/nav.js" defer></script>
+</head>
+<body>
+  <div class="layout">
+    <main>
+      <div class="inner">
+        <header>
+          <h1>Routines</h1>
+          <div class="actions"><button class="primary" id="new-routine">+ New routine</button></div>
+        </header>
+        <div class="tabs">
+          <button data-filter="active">Active<span class="count" id="c-active"></span></button>
+          <button data-filter="paused">Paused<span class="count" id="c-paused"></span></button>
+          <button data-filter="all">All<span class="count" id="c-all"></span></button>
+        </div>
+        <div id="list"></div>
+      </div>
+    </main>
+    <aside id="panel" hidden>
+      <div class="head">
+        <h2 id="panel-title"></h2>
+        <button class="close-panel" id="close-panel" aria-label="Close panel">×</button>
+      </div>
+      <div id="panel-body"></div>
+    </aside>
+  </div>
+
+  <script>
+    const el = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+    const when = (iso) => (iso ? new Date(iso).toLocaleString() : "—");
+    let filter = new URLSearchParams(location.search).get("filter") || "active";
+    let routines = [];
+    let agents = [];
+    let selectedId = null;
+    const BROWSER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
+    async function apiCall(method, url, body) {
+      const res = await fetch(url, { method, headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined });
+      const data = await res.json();
+      if (!res.ok) throw new Error(`${data.error}${data.hint ? ` (${data.hint})` : ""}`);
+      return data;
+    }
+
+    function showPanel(title, html) { el("panel-title").textContent = title; el("panel-body").innerHTML = html; el("panel").hidden = false; }
+    function closePanel() { el("panel").hidden = true; selectedId = null; render(); }
+    el("close-panel").addEventListener("click", closePanel);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !el("panel").hidden) closePanel(); });
+
+    function render() {
+      document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.filter === filter));
+      const active = routines.filter((r) => r.enabled), paused = routines.filter((r) => !r.enabled);
+      el("c-active").textContent = active.length; el("c-paused").textContent = paused.length; el("c-all").textContent = routines.length;
+      const list = filter === "active" ? active : filter === "paused" ? paused : routines;
+      if (!list.length) { el("list").innerHTML = `<div class="empty">No routines here. Create one with + New routine.</div>`; return; }
+      el("list").innerHTML = `<table><thead><tr><th>Name</th><th>Agent</th><th>Schedule</th><th>Last run</th><th>Next run</th><th></th></tr></thead><tbody>${
+        list.map((r) => `<tr data-id="${esc(r.id)}" class="${r.id === selectedId ? "selected" : ""}">
+          <td><strong>${esc(r.name)}</strong>${r.enabled ? "" : ` <span class="meta">(paused)</span>`}</td>
+          <td>${esc(r.owner_name)}</td>
+          <td>${esc(r.schedule_text)}</td>
+          <td class="meta">${when(r.last_run_at)}</td>
+          <td class="${r.enabled ? "" : "off"}">${r.enabled ? when(r.next_run_at) : "—"}</td>
+          <td><button class="ghost run" data-run="${esc(r.id)}">Run now</button></td>
+        </tr>`).join("")
+      }</tbody></table>`;
+      document.querySelectorAll("tbody tr").forEach((tr) => tr.addEventListener("click", () => openDetails(tr.dataset.id)));
+      document.querySelectorAll("[data-run]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); runNow(b.dataset.run, b); }));
+    }
+
+    async function load() {
+      const [r, a] = await Promise.all([(await fetch("/api/routines")).json(), (await fetch("/api/agents")).json()]);
+      routines = r.routines ?? [];
+      agents = a.agents ?? [];
+      render();
+    }
+
+    async function runNow(id, btn) {
+      if (btn) { btn.disabled = true; btn.textContent = "Running…"; }
+      try {
+        const res = await apiCall("POST", `/api/routines/${encodeURIComponent(id)}/run`);
+        if (btn) btn.textContent = res.status === "started" ? `Started ${res.task}` : res.status === "skipped" ? "Skipped" : "Failed";
+        if (res.status !== "started") alert(`Run ${res.status}: ${res.reason ?? ""}`);
+        await load();
+        if (selectedId === id) openDetails(id);
+      } catch (err) {
+        alert(err.message);
+        if (btn) { btn.disabled = false; btn.textContent = "Run now"; }
+      }
+    }
+
+    // ---- form (new and edit) ------------------------------------------------------------
+    // Presets map to cron or interval: every N hours / minutes, daily at, weekdays at, custom cron, manual.
+    function scheduleFromForm() {
+      const preset = el("f-preset").value;
+      const tz = el("f-tz").value.trim() || "UTC";
+      const time = (el("f-time").value || "08:00").split(":");
+      const [h, m] = [Number(time[0]), Number(time[1] ?? 0)];
+      const n = Number(el("f-n").value);
+      switch (preset) {
+        case "hours": return { schedule_kind: "interval", interval_minutes: n * 60, timezone: tz };
+        case "minutes": return { schedule_kind: "interval", interval_minutes: n, timezone: tz };
+        case "daily": return { schedule_kind: "cron", cron: `${m} ${h} * * *`, timezone: tz };
+        case "weekdays": return { schedule_kind: "cron", cron: `${m} ${h} * * 1-5`, timezone: tz };
+        case "cron": return { schedule_kind: "cron", cron: el("f-cron").value.trim(), timezone: tz };
+        default: return { schedule_kind: "manual", timezone: tz };
+      }
+    }
+
+    function presetFor(r) {
+      if (!r) return { preset: "daily", n: 5, time: "08:00", cron: "0 8 * * *" };
+      if (r.schedule_kind === "manual") return { preset: "manual", n: 5, time: "08:00", cron: "" };
+      if (r.schedule_kind === "interval") {
+        return r.interval_minutes % 60 === 0
+          ? { preset: "hours", n: r.interval_minutes / 60, time: "08:00", cron: "" }
+          : { preset: "minutes", n: r.interval_minutes, time: "08:00", cron: "" };
+      }
+      const [min, hour, dom, mon, dow] = (r.cron || "").split(" ");
+      const time = /^\d+$/.test(min) && /^\d+$/.test(hour) ? `${String(hour).padStart(2, "0")}:${String(min).padStart(2, "0")}` : "08:00";
+      if (dom === "*" && mon === "*" && dow === "*" && time) return { preset: "daily", n: 5, time, cron: r.cron };
+      if (dom === "*" && mon === "*" && dow === "1-5") return { preset: "weekdays", n: 5, time, cron: r.cron };
+      return { preset: "cron", n: 5, time, cron: r.cron };
+    }
+
+    function syncPresetFields() {
+      const p = el("f-preset").value;
+      el("f-n-row").hidden = !(p === "hours" || p === "minutes");
+      el("f-n-label").textContent = p === "hours" ? "Every N hours" : "Every N minutes";
+      el("f-time-row").hidden = !(p === "daily" || p === "weekdays");
+      el("f-cron-row").hidden = p !== "cron";
+    }
+
+    let previewTimer;
+    function schedulePreview() {
+      clearTimeout(previewTimer);
+      previewTimer = setTimeout(async () => {
+        try {
+          const res = await apiCall("POST", "/api/routines/preview", scheduleFromForm());
+          el("f-preview").innerHTML = `<b>${esc(res.schedule_text)}</b>${res.next_runs.length ? `<br>Next: ${res.next_runs.map((d) => esc(new Date(d).toLocaleString())).join(" · ")}` : ""}`;
+        } catch (err) {
+          el("f-preview").innerHTML = `<span class="error">${esc(err.message)}</span>`;
+        }
+      }, 250);
+    }
+
+    function openForm(r) {
+      const p = presetFor(r);
+      const leads = agents.filter((a) => a.tier === "lead");
+      const ownerOptions = [
+        `<option value="principal">Principal</option>`,
+        ...leads.map((l) => `<optgroup label="${esc(l.name)} (Lead)"><option value="${esc(l.id)}">${esc(l.name)}</option>
+          ${agents.filter((o) => o.parent_id === l.id).map((o) => `<option value="${esc(o.id)}">${esc(o.name)} (Operator)</option>`).join("")}</optgroup>`),
+      ].join("");
+      showPanel(r ? `Edit ${r.name}` : "New routine", `
+        <form id="r-form">
+          <label for="f-name">Name</label>
+          <input id="f-name" required value="${esc(r?.name ?? "")}" placeholder="e.g. Morning report">
+
+          <label for="f-owner">Agent</label>
+          <select id="f-owner">${ownerOptions}</select>
+
+          <label for="f-preset">Schedule</label>
+          <select id="f-preset">
+            <option value="hours">Every N hours</option>
+            <option value="minutes">Every N minutes</option>
+            <option value="daily">Every day at</option>
+            <option value="weekdays">Weekdays at</option>
+            <option value="cron">Custom cron</option>
+            <option value="manual">Manual only</option>
+          </select>
+          <div id="f-n-row"><label for="f-n" id="f-n-label">Every N hours</label><input id="f-n" type="number" min="1" value="${esc(p.n)}"></div>
+          <div id="f-time-row"><label for="f-time">At</label><input id="f-time" type="time" value="${esc(p.time)}"></div>
+          <div id="f-cron-row"><label for="f-cron">Cron (minute hour day month weekday)</label><input id="f-cron" value="${esc(p.cron)}" placeholder="0 8 * * *"></div>
+          <label for="f-tz">Timezone</label>
+          <input id="f-tz" value="${esc(r?.timezone ?? BROWSER_TZ)}" placeholder="Europe/Dublin">
+          <div class="preview" id="f-preview"></div>
+
+          <label for="f-prompt">Prompt (sent to the agent on each run)</label>
+          <textarea id="f-prompt" required style="min-height:140px" placeholder="What the agent should do every time">${esc(r?.prompt ?? "")}</textarea>
+
+          <label class="switch"><input type="checkbox" id="f-enabled" ${r ? (r.enabled ? "checked" : "") : "checked"}> Enabled</label>
+
+          <div class="error" id="f-error"></div>
+          <div class="form-actions"><button type="submit" class="primary" id="f-submit">Save</button></div>
+        </form>`);
+      el("f-owner").value = r?.owner_id ?? "principal";
+      el("f-preset").value = p.preset;
+      syncPresetFields();
+      schedulePreview();
+      for (const id of ["f-preset", "f-n", "f-time", "f-cron", "f-tz"]) {
+        el(id).addEventListener("input", () => { syncPresetFields(); schedulePreview(); });
+        el(id).addEventListener("change", () => { syncPresetFields(); schedulePreview(); });
+      }
+      el("r-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const btn = el("f-submit");
+        if (btn.disabled) return;
+        btn.disabled = true; btn.textContent = "Saving…"; el("f-error").textContent = "";
+        const body = { name: el("f-name").value, owner_id: el("f-owner").value, prompt: el("f-prompt").value, enabled: el("f-enabled").checked, cron: null, interval_minutes: null, ...scheduleFromForm() };
+        try {
+          const saved = r ? await apiCall("PATCH", `/api/routines/${encodeURIComponent(r.id)}`, body) : await apiCall("POST", "/api/routines", body);
+          await load();
+          openDetails(saved.id);
+        } catch (err) {
+          el("f-error").textContent = err.message;
+          btn.disabled = false; btn.textContent = "Save";
+        }
+      });
+    }
+    el("new-routine").addEventListener("click", () => { selectedId = null; render(); openForm(null); });
+
+    // ---- details --------------------------------------------------------------------------
+    async function openDetails(id) {
+      selectedId = id;
+      render();
+      const r = await (await fetch(`/api/routines/${encodeURIComponent(id)}`)).json();
+      if (r.error) { showPanel("Routine", `<div class="error">${esc(r.error)}</div>`); return; }
+      showPanel(r.name, `
+        <div class="meta">${r.enabled ? "Active" : "Paused"} · ${esc(r.owner_name)}</div>
+        <label>Schedule</label><div>${esc(r.schedule_text)}</div>
+        <label>Next run</label><div>${r.enabled ? when(r.next_run_at) : "—"}</div>
+        <label>Prompt</label><p style="white-space:pre-wrap;margin:0">${esc(r.prompt)}</p>
+        <div class="form-actions">
+          <button class="primary" id="d-run">Run now</button>
+          <button class="ghost" id="d-toggle">${r.enabled ? "Pause" : "Resume"}</button>
+          <button class="ghost" id="d-edit">Edit</button>
+          <button class="ghost danger" id="d-delete">Delete</button>
+        </div>
+        <div class="error" id="d-error"></div>
+        <label>Runs</label>
+        ${r.runs.length ? r.runs.map((x) => `<div class="comment">
+            <div class="meta">${when(x.at)} · ${esc(x.trigger === "manual" ? "run now" : "scheduled")}</div>
+            <span class="status-${esc(x.status)}">${esc(x.status)}</span>
+            ${x.task_identifier ? ` · <a href="/tasks.html?filter=all">${esc(x.task_identifier)}</a> <span class="meta">(${esc(x.task_state)})</span>` : ""}
+            ${x.reason ? `<div class="meta">${esc(x.reason)}</div>` : ""}
+          </div>`).join("") : `<div class="meta">No runs yet.</div>`}`);
+      el("d-run").addEventListener("click", () => runNow(r.id, el("d-run")));
+      el("d-edit").addEventListener("click", () => openForm(r));
+      el("d-toggle").addEventListener("click", async () => {
+        try { await apiCall("PATCH", `/api/routines/${encodeURIComponent(r.id)}`, { enabled: !r.enabled }); await load(); openDetails(r.id); }
+        catch (err) { el("d-error").textContent = err.message; }
+      });
+      el("d-delete").addEventListener("click", async () => {
+        if (!confirm(`Delete routine ${r.name}?`)) return;
+        try { await apiCall("DELETE", `/api/routines/${encodeURIComponent(r.id)}`); await load(); closePanel(); }
+        catch (err) { el("d-error").textContent = err.message; }
+      });
+    }
+
+    document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => {
+      filter = b.dataset.filter; history.replaceState(null, "", `?filter=${filter}`); render();
+    }));
+    load();
+  </script>
+</body>
+</html>
