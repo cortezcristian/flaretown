@@ -2,7 +2,7 @@
 
 **Agent orchestration on Cloudflare.**
 
-Run a small company of AI agents on your own Cloudflare account. A Principal plans the work, Leads split it, Operators get it done, and you review the results. No servers, no Kubernetes, no API keys to babysit: everything runs on Workers, Durable Objects and Workers AI, fully under your control.
+Run a small company of AI agents on your own Cloudflare account. A Principal plans the work, Leads split it, Operators get it done, and you review the results. Spin up as many Leads and Operators as the work needs, and retire them when it's done. No servers, no Kubernetes, no API keys to babysit: everything runs on Workers, Durable Objects and Workers AI, fully under your control.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cortezcristian/flaretown)
 
