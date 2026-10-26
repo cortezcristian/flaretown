@@ -12,12 +12,12 @@
     "deploy": "wrangler deploy && wrangler d1 migrations apply DB_CORE --remote && wrangler d1 migrations apply DB_RUNS --remote",
     "deploy:no-containers": "wrangler deploy --containers-rollout=none && wrangler d1 migrations apply DB_CORE --remote && wrangler d1 migrations apply DB_RUNS --remote",
     "types": "wrangler types",
-    "typecheck": "wrangler types && tsc --noEmit && tsc --noEmit -p client",
+    "typecheck": "node scripts/build-skills.mjs && wrangler types && tsc --noEmit && tsc --noEmit -p client",
     "db:migrate:local": "wrangler d1 migrations apply DB_CORE --local && wrangler d1 migrations apply DB_RUNS --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB_CORE --remote && wrangler d1 migrations apply DB_RUNS --remote",
     "teardown": "wrangler delete && wrangler d1 delete flaretown-core && wrangler d1 delete flaretown-runs && wrangler r2 bucket delete flaretown-artifacts && echo 'Also delete the agent repos in Cloudflare Artifacts (agent-*), the sandbox container apps and images (pnpm wrangler containers list / delete, pnpm wrangler containers images list / delete), and agents/*/browser-profile.tar.gz in R2'",
     "check:images": "bash scripts/check-images.sh",
-    "build:client": "esbuild client/chat.tsx client/overview.ts client/palette.tsx --bundle --format=esm --minify --outdir=public"
+    "build:client": "node scripts/build-skills.mjs && esbuild client/chat.tsx client/overview.ts client/palette.tsx --bundle --format=esm --minify --outdir=public"
   },
   "dependencies": {
     "@ai-sdk/provider": "3.0.19",

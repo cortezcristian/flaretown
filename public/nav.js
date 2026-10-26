@@ -10,6 +10,7 @@
     { href: "/routines.html", label: "Routines", icon: "M12 7v5l3 2M21 12a9 9 0 1 1-3-6.7M21 4v4h-4" },
     { href: "/artifacts.html", label: "Artifacts", icon: "M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9" },
     { href: "/containers.html", label: "Containers", icon: "M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10" },
+    { href: "/skills.html", label: "Skills", icon: "M12 2l2.4 5.6L20 8.3l-4.3 4 1.1 6L12 15.4 7.2 18.3l1.1-6-4.3-4 5.6-.7z" },
     { href: "/agents.html", label: "Agents", icon: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21c0-4 4-6 8-6s8 2 8 6" },
     { href: "/orchestrator.html", label: "Orchestrator", icon: "M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" },
   ];

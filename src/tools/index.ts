@@ -18,6 +18,7 @@ import { commitFiles, ensureAgentRepo, repoFile, repoTree } from "../services/re
 import type { Caller } from "../services/caller";
 import { getTimezone } from "../services/settings";
 import { addEvidence, createDecision, getDecision, listDecisions, withdrawDecision } from "../services/decisions";
+import { listSkills, setAgentSkills } from "../services/skills";
 import {
   cancelTask,
   checkCriterion,
@@ -187,8 +188,27 @@ export const allTools: ToolDef[] = [
       sandbox_persist: z.boolean().optional().describe("Sandbox files survive restarts (snapshots). Default off"),
       container_image: z.string().optional().describe("Sandbox image: debian (default, Node/npm), desktop (Chromium, noVNC) or a custom image"),
       container_instance: z.enum(["lite", "basic", "standard-1", "standard-2", "standard-3", "standard-4"]).optional().describe("Container size. Default per image"),
+      skills: z.array(z.string()).optional().describe("Skill names from the library (see skills_list)"),
     }),
-    run: (env, caller, args) => createAgent(env.DB_CORE, caller, args),
+    run: async (env, caller, { skills, ...args }) => {
+      const agent = await createAgent(env.DB_CORE, caller, args);
+      if (skills?.length) await setAgentSkills(env.DB_CORE, caller, agent.id, skills);
+      return agent;
+    },
+  }),
+  defineTool({
+    name: "skills_list",
+    description: "List the skills installed in Flaretown (name, description, whether every agent has it).",
+    input: z.object({}),
+    run: async (env) =>
+      (await listSkills(env.DB_CORE)).map((s) => ({ name: s.name, description: s.description, all_agents: s.all_agents, source: s.source })),
+  }),
+  defineTool({
+    name: "agents_set_skills",
+    description:
+      "Set the skills an agent has (replaces its list; all-agents skills stay). The Principal can set any agent's skills; a Lead only its own Operators'.",
+    input: z.object({ agent: z.string().describe("Agent id"), skills: z.array(z.string()).describe("Skill names, see skills_list") }),
+    run: (env, caller, args) => setAgentSkills(env.DB_CORE, caller, args.agent, args.skills),
   }),
   defineTool({
     name: "agents_retire",
@@ -451,7 +471,7 @@ const TIER_TOOLS: Record<string, string[]> = {
   lead: [
     "tasks_list", "tasks_get", "tasks_update", "tasks_comment", "tasks_create_subtask",
     "tasks_check_criterion", "tasks_close", "tasks_send_back", "tasks_cancel",
-    "agents_list", "agents_create", "agents_retire",
+    "agents_list", "agents_create", "agents_retire", "agents_set_skills", "skills_list",
     "routines_list", "routines_create", "routines_update", "routines_delete", "routines_run",
     "reports_save", "reports_list", "reports_read", "artifacts_write", "artifacts_read", "artifacts_list", "time_now",
     "decisions_request", "decisions_add_evidence", "decisions_get", "decisions_list", "decisions_withdraw",

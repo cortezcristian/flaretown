@@ -38,6 +38,8 @@
     const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
     let agents = [];
     let models = [];
+    // Skills library (task 017): [{ name, description, all_agents }]
+    let skillsLib = [];
     // Container images (task 014): [{ name, description, default_instance, desktop }]
     let images = [{ name: "debian", description: "Debian with Node.js and npm", default_instance: "lite" }];
     const INSTANCES = ["lite", "basic", "standard-1", "standard-2", "standard-3", "standard-4"];
@@ -96,6 +98,9 @@
         const imgs = await (await fetch("/api/containers/images")).json();
         if (imgs.images?.length) images = imgs.images;
       } catch { /* keep the stock image only */ }
+      try {
+        skillsLib = (await (await fetch("/api/skills")).json()).skills ?? [];
+      } catch { skillsLib = []; }
       render();
     }
 
@@ -128,6 +133,12 @@
           <label for="f-area">What it does</label>
           <textarea id="f-area" rows="3" placeholder="e.g. Watches competitors' websites and pricing, and reports what changed every Monday."></textarea>
           <div class="meta">Its role in a few sentences. It goes into the agent's prompt and helps the Principal route work to it.</div>
+
+          <label>Skills</label>
+          <div class="meta">${skillsLib.filter((s) => s.all_agents).length ? `Every agent gets: ${skillsLib.filter((s) => s.all_agents).map((s) => esc(s.name)).join(", ")}. ` : ""}<a href="/skills.html">Manage skills</a></div>
+          <div style="max-height:160px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:4px 10px;margin-top:4px">
+            ${skillsLib.filter((s) => !s.all_agents).map((s) => `<label style="display:flex;gap:8px;align-items:flex-start;color:var(--fg);margin:6px 0" title="${esc(s.description)}"><input type="checkbox" class="f-skill" value="${esc(s.name)}" style="width:auto;margin-top:3px"> ${esc(s.name)}</label>`).join("") || `<div class="meta">No other skills installed.</div>`}
+          </div>
 
           <label for="f-model">Model</label>
           <select id="f-model">${models.map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join("")}</select>
@@ -181,6 +192,7 @@
             area: el("f-area").value,
             model: el("f-model").value,
             code_mode: el("f-codemode").checked,
+            skills: [...document.querySelectorAll(".f-skill:checked")].map((b) => b.value),
             sandbox_enabled: Boolean(el("f-image").value),
             sandbox_internet: el("f-sandbox-internet").checked,
             sandbox_persist: el("f-sandbox-persist").checked,
@@ -209,6 +221,7 @@
         <label>Reports to</label><div>${a.parent_id ? esc(nameOf(a.parent_id)) : "Human"}</div>
         ${a.area ? `<label>What it does</label><div style="white-space:pre-wrap">${esc(a.area)}</div>` : ""}
         <label>Model</label><div>${esc(modelName(a.model))}</div>
+        <label>Skills</label><div id="d-skills" class="meta">Loading…</div>
         <label>Code Mode</label>
         <label style="display:flex;align-items:center;gap:8px;color:var(--fg);margin-top:0"><input type="checkbox" id="d-codemode" style="width:auto" ${a.code_mode ? "checked" : ""} ${a.status === "retired" ? "disabled" : ""}> exec tool <span class="meta">(needs the global switch in Orchestrator)</span></label>
         <label>Container</label>
@@ -226,6 +239,12 @@
           ${a.tier === "principal" ? "" : `<button class="ghost danger" id="d-delete">Delete</button>`}
         </div>
         <div class="error" id="d-error"></div>`);
+
+      fetch(`/api/agents/${encodeURIComponent(a.id)}/skills`).then((r) => r.json()).then((d) => {
+        const active = (d.skills ?? []).filter((s) => s.active);
+        el("d-skills").innerHTML = (active.map((s) => esc(s.name)).join(", ") || "None") +
+          ` · <a href="/chat.html?agent=${encodeURIComponent(a.id)}&panel=skills">Edit</a>`;
+      }).catch(() => { el("d-skills").textContent = "—"; });
 
       el("d-codemode")?.addEventListener("change", async (e) => {
         const box = e.target;

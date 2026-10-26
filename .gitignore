@@ -156,3 +156,4 @@ worker-configuration.d.ts
 public/chat.js
 public/overview.js
 public/palette.js
+src/skills/bundled.generated.ts

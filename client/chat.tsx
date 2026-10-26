@@ -11,7 +11,7 @@ const AGENT_ID = new URLSearchParams(location.search).get("agent") || "principal
 const CHAT_BASE_PATH = `api/agents/${AGENT_ID}/chat`;
 // From the Cmd+K palette: ?panel=tasks|config opens a side panel, ?draft=... pre-fills the composer.
 const QUERY = new URLSearchParams(location.search);
-const INITIAL_PANEL = (["tasks", "config", "container"] as const).find((p) => p === QUERY.get("panel")) ?? null;
+const INITIAL_PANEL = (["tasks", "config", "container", "skills"] as const).find((p) => p === QUERY.get("panel")) ?? null;
 // Unsent text is kept per agent in localStorage, so a refresh doesn't lose it.
 const DRAFT_KEY = `flaretown.chat.draft.${AGENT_ID}`;
 function readDraft(): string {
@@ -91,6 +91,9 @@ function toolSummary(part: ToolPart): string {
     case "tasks_send_back": return `Sent back ${out.identifier ?? "task"}`;
     case "tasks_cancel": return `Cancelled ${out.identifier ?? "task"}`;
     case "exec": return "Ran code";
+    case "activate_skill": return `Used skill ${String((part.input as { name?: unknown } | undefined)?.name ?? "")}`;
+    case "read_skill_resource": return `Read ${String((part.input as { name?: unknown; path?: unknown } | undefined)?.path ?? "a skill file")}`;
+    case "run_skill_script": return "Ran a skill script";
     case "decisions_request": return `Requested decision ${(part.output as { identifier?: string } | undefined)?.identifier ?? ""}`;
     case "decisions_add_evidence": return `Added evidence to ${(part.output as { identifier?: string } | undefined)?.identifier ?? "a decision"}`;
     case "decisions_withdraw": return "Withdrew a decision";
@@ -194,6 +197,58 @@ type SandboxStatus = {
   profile: { size: number; at: string } | null;
   tier: { running: number; max: number };
 };
+type AgentSkill = { name: string; description: string; source: string; all_agents: boolean; assigned: boolean; active: boolean };
+
+// Right panel "Skills" (task 017): what this agent can use, and which ones it used in this chat.
+function SkillsPanel({ used, onCount }: { used: string[]; onCount: (n: number) => void }) {
+  const [skills, setSkills] = useState<AgentSkill[] | null>(null);
+  const [error, setError] = useState("");
+  const load = useCallback(() => {
+    api<{ skills: AgentSkill[] }>("GET", `/api/agents/${AGENT_ID}/skills`)
+      .then((d) => {
+        setSkills(d.skills);
+        onCount(d.skills.filter((s) => s.active).length);
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, [onCount]);
+  useEffect(load, [load]);
+  if (!skills) return error ? <p className="error">{error}</p> : <p className="muted">Loading…</p>;
+  const toggle = async (name: string, on: boolean) => {
+    const names = skills.filter((s) => s.assigned && s.name !== name).map((s) => s.name);
+    if (on) names.push(name);
+    setError("");
+    try {
+      const d = await api<{ skills: AgentSkill[] }>("PUT", `/api/agents/${AGENT_ID}/skills`, { skills: names });
+      setSkills(d.skills);
+      onCount(d.skills.filter((s) => s.active).length);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+  return (
+    <div className="skills-panel">
+      <p className="muted">
+        The agent sees each skill's name and description, and loads one when a task matches it. Changes apply on the next message.{" "}
+        <a href="/skills.html">Manage skills</a>
+      </p>
+      {used.length > 0 && <p className="muted">Used in this chat: {used.join(", ")}</p>}
+      <ul className="panel-list">
+        {skills.map((s) => (
+          <li key={s.name}>
+            <label className="check" title={s.description}>
+              <input type="checkbox" checked={s.active} disabled={s.all_agents} onChange={(e) => toggle(s.name, e.target.checked)} /> {s.name}
+              {s.all_agents && <span className="muted"> · all agents</span>}
+            </label>
+            <div className="muted">{s.description}</div>
+          </li>
+        ))}
+      </ul>
+      {!skills.length && <p className="muted">No skills installed.</p>}
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
 type ImageInfo = { name: string; description: string; default_instance: string; desktop: boolean };
 const INSTANCES = ["lite", "basic", "standard-1", "standard-2", "standard-3", "standard-4"];
 const imageLabel = (i: ImageInfo) =>
@@ -376,7 +431,7 @@ type TaskSummary = {
   criteria_total: number;
   criteria_checked: number;
 };
-type Panel = "tasks" | "config" | "container" | null;
+type Panel = "tasks" | "config" | "container" | "skills" | null;
 
 async function api<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -698,6 +753,24 @@ function Chat({ agents }: { agents: AgentInfo[] }) {
     history.replaceState(null, "", url);
   }, [panel]);
 
+  // Skills: count for the header button, and skills activated in this chat (from tool rows).
+  const [skillCount, setSkillCount] = useState<number | null>(null);
+  useEffect(() => {
+    api<{ skills: AgentSkill[] }>("GET", `/api/agents/${AGENT_ID}/skills`)
+      .then((d) => setSkillCount(d.skills.filter((s) => s.active).length))
+      .catch(() => {});
+  }, []);
+  const usedSkills = [
+    ...new Set(
+      messages.flatMap((m) =>
+        m.parts
+          .filter((p) => isToolPart(p) && toolName(p as ToolPart) === "activate_skill")
+          .map((p) => String(((p as ToolPart).input as { name?: unknown } | undefined)?.name ?? ""))
+          .filter(Boolean),
+      ),
+    ),
+  ];
+
   // Container status for the header chip and the Container panel (task 014).
   const [container, setContainer] = useState<SandboxStatus | null>(null);
   const hasContainer = Boolean(config?.sandbox_enabled);
@@ -724,6 +797,9 @@ function Chat({ agents }: { agents: AgentInfo[] }) {
           <nav className="menu">
             <button type="button" className={panel === "tasks" ? "active" : ""} onClick={() => toggle("tasks")}>
               Tasks <span className="badge">{tasks.length}</span>
+            </button>
+            <button type="button" className={panel === "skills" ? "active" : ""} onClick={() => toggle("skills")}>
+              Skills {skillCount !== null && <span className="badge">{skillCount}</span>}
             </button>
             {hasContainer && (
               <button
@@ -809,7 +885,7 @@ function Chat({ agents }: { agents: AgentInfo[] }) {
       {panel && (
         <aside className="side">
           <div className="side-head">
-            <h2>{panel === "tasks" ? `Tasks (${tasks.length})` : panel === "container" ? "Container" : "Config"}</h2>
+            <h2>{panel === "tasks" ? `Tasks (${tasks.length})` : panel === "container" ? "Container" : panel === "skills" ? "Skills" : "Config"}</h2>
             <button type="button" className="close" aria-label="Close panel" onClick={() => setPanel(null)}>
               ×
             </button>
@@ -818,6 +894,8 @@ function Chat({ agents }: { agents: AgentInfo[] }) {
             <TasksPanel tasks={tasks} busy={busy} onAskStatus={askStatus} />
           ) : panel === "container" ? (
             <ContainerPanel status={container} onRefresh={loadContainer} />
+          ) : panel === "skills" ? (
+            <SkillsPanel used={usedSkills} onCount={setSkillCount} />
           ) : (
             <ConfigPanel config={config} models={models} onChange={updateConfig} error={configError} />
           )}

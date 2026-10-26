@@ -5,7 +5,7 @@ import { Workspace } from "@cloudflare/computer";
 import { WorkerJavaScriptBackend } from "@cloudflare/computer/backends/worker-javascript";
 import { createToolBindings } from "@cloudflare/computer/modules/tools";
 import { forAISDKTools } from "@cloudflare/computer/tools/ai-sdk";
-import { defaultContextOverflowClassifier, type Session, Think, type TurnContext } from "@cloudflare/think";
+import { defaultContextOverflowClassifier, type Session, skills, Think, type TurnContext } from "@cloudflare/think";
 import { createAI } from "agents/models/ai-sdk";
 import { createCompactFunction } from "agents/sessions";
 import { generateText, tool, type ToolSet } from "ai";
@@ -17,6 +17,8 @@ import { ServiceError } from "../services/errors";
 import { getTask, type TaskDetail } from "../services/tasks";
 import { toolsForTier } from "../tools";
 import { imageInfo } from "../services/containers";
+import { getSkillsSettings } from "../services/skills";
+import { FlaretownSkillSource } from "../skills/source";
 import { AgentSandbox, INACTIVITY_TIMEOUT_MS } from "./sandbox";
 
 export const TIME_RULE =
@@ -77,10 +79,49 @@ export abstract class FlaretownAgent extends Think<Env> {
   // Sandbox (SPEC-sandbox, task 013): the container on this Durable Object.
   sandbox: AgentSandbox;
 
+  // Skills (task 017, SPEC-skills): the agent's own + all-agents skills, read every turn.
+  skillSource: FlaretownSkillSource;
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.sandbox = new AgentSandbox(ctx, env, () => this.agentId(), () => this.tier());
     this.sandbox.onAgentStart();
+    this.skillSource = new FlaretownSkillSource(env, () => this.agentId());
+  }
+
+  getSkills() {
+    return [this.skillSource];
+  }
+
+  // run_skill_script (experimental). Always wired so the tool exists; beforeTurn hides it unless
+  // the Skills setting and the agent's Code Mode are both on, and run() checks again.
+  getSkillScriptRunner() {
+    const runner = skills.runner({ loader: this.env.LOADER, workspaceInstance: this.workspace as never, workspace: "read", network: false });
+    return {
+      run: async (request: Parameters<typeof runner.run>[0]) => {
+        const [settings, config] = await Promise.all([getSkillsSettings(this.env.DB_CORE), getAgentConfig(this.env.DB_CORE, this.agentId())]);
+        if (!settings.scripts_enabled || !config.code_mode_active) throw new Error("Skill scripts are off for this agent.");
+        return runner.run(request);
+      },
+    };
+  }
+
+  // The tier prompt as a fixed context block. Once skills register their catalog block, Think
+  // ignores getSystemPrompt() (it's only a fallback when there are no blocks), so the prompt
+  // must be a block too. It goes first, before the skills catalog.
+  configureContext() {
+    return [
+      {
+        label: "flaretown_role",
+        description: "Who this agent is and how it works in Flaretown",
+        provider: {
+          get: async () => {
+            await this.loadProfile();
+            return this.getSystemPrompt();
+          },
+        },
+      },
+    ];
   }
 
   // Code Mode (SPEC-orchestrator 8.1, task 012): a JS backend on Dynamic Workers gives the model
@@ -169,6 +210,7 @@ export abstract class FlaretownAgent extends Think<Env> {
     else hidden.add("exec");
     if (config.sandbox_active) rules.push(sandboxRule(config.container_image, config.sandbox_internet, config.sandbox_persist));
     else for (const name of SANDBOX_TOOLS) hidden.add(name);
+    if (!config.code_mode_active || !(await getSkillsSettings(this.env.DB_CORE)).scripts_enabled) hidden.add("run_skill_script");
     return {
       model,
       activeTools: Object.keys(ctx.tools).filter((name) => !hidden.has(name)),

@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flaretown · Skills</title>
+  <link rel="stylesheet" href="/ui.css">
+  <style>
+    .inner.wide { max-width: 1200px; }
+    .pill { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; color: var(--muted); }
+    .pill.bundled { color: var(--accent); border-color: var(--accent); }
+    .desc { color: var(--muted); font-size: 13px; }
+    td .ghost, td .primary { padding: 3px 10px; font-size: 13px; }
+    .switch { display: inline-flex; align-items: center; gap: 6px; }
+    .switch input { width: auto; }
+    .md h1, .md h2, .md h3 { font-size: 14px; margin: 12px 0 4px; }
+    .md p { margin: 4px 0; } .md ul, .md ol { margin: 4px 0; padding-left: 20px; }
+    .md code { font-family: ui-monospace, monospace; font-size: 12px; background: var(--bg); padding: 1px 4px; border-radius: 4px; }
+    .md pre { background: var(--bg); padding: 8px; border-radius: 6px; overflow: auto; }
+    .files { list-style: none; padding: 0; margin: 0; font-size: 13px; }
+    .files li { padding: 3px 0; border-top: 1px solid var(--border); }
+    .files a { cursor: pointer; }
+    pre.file { white-space: pre-wrap; word-break: break-word; background: var(--bg); padding: 8px; border-radius: 6px; font-size: 12px; max-height: 300px; overflow: auto; }
+    .warn { font-size: 13px; padding: 8px 10px; border-radius: 8px; margin: 8px 0; background: color-mix(in srgb, var(--accent) 12%, transparent); }
+    .agents-pick { max-height: 220px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+    .agents-pick label { display: flex; align-items: center; gap: 8px; color: var(--fg); margin: 4px 0; font-size: 14px; }
+    .agents-pick input { width: auto; }
+    .settings { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+    .drop { border: 2px dashed var(--border); border-radius: 10px; padding: 16px; text-align: center; color: var(--muted); font-size: 13px; }
+    .drop.over { border-color: var(--accent); color: var(--accent); }
+    tbody tr { cursor: pointer; }
+  </style>
+  <script src="/nav.js" defer></script>
+</head>
+<body>
+  <div class="layout">
+    <main>
+      <div class="inner wide">
+        <header>
+          <h1>Skills</h1>
+          <div class="actions"><button class="primary" id="add">+ Add skill</button></div>
+        </header>
+        <div class="settings">
+          <label class="switch"><input type="checkbox" id="scripts"> Run skill scripts</label>
+          <span>(experimental: agents with Code Mode can run a skill's <code>scripts/</code> on Dynamic Workers, no network)</span>
+        </div>
+        <div class="tabs">
+          <button data-tab="library">Library<span class="count" id="c-library"></span></button>
+          <button data-tab="suggested">Suggested</button>
+        </div>
+        <div class="error" id="error"></div>
+        <div id="content"><div class="empty">Loading…</div></div>
+      </div>
+    </main>
+    <aside id="panel" hidden>
+      <div class="head">
+        <h2 id="panel-title"></h2>
+        <button class="close-panel" id="close-panel" aria-label="Close panel">×</button>
+      </div>
+      <div id="panel-body"></div>
+    </aside>
+  </div>
+
+  <script>
+    const el = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+    const when = (iso) => (iso ? new Date(iso).toLocaleString() : "—");
+    const size = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+    let tab = new URLSearchParams(location.search).get("tab") || "library";
+    let library = [];
+    let agents = [];
+    let selected = new URLSearchParams(location.search).get("skill");
+
+    async function api(method, url, body, raw) {
+      const res = await fetch(url, {
+        method,
+        headers: raw ? { "content-type": "application/zip" } : body ? { "content-type": "application/json" } : undefined,
+        body: raw ?? (body ? JSON.stringify(body) : undefined),
+      });
+      const out = await res.json();
+      if (!res.ok) throw new Error(`${out.error}${out.hint ? ` (${out.hint})` : ""}`);
+      return out;
+    }
+
+    // Tiny Markdown renderer (escaped first; no raw HTML).
+    function inline(s) {
+      return s.replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    }
+    function markdown(src) {
+      const lines = esc(src.replace(/^---\n[\s\S]*?\n---\n/, "")).split("\n");
+      let out = "", list = null, code = false, para = [];
+      const flush = () => { if (para.length) { out += `<p>${inline(para.join(" "))}</p>`; para = []; } };
+      const closeList = () => { if (list) { out += `</${list}>`; list = null; } };
+      for (const line of lines) {
+        if (line.startsWith("```")) { flush(); closeList(); out += code ? "</code></pre>" : "<pre><code>"; code = !code; continue; }
+        if (code) { out += line + "\n"; continue; }
+        let m;
+        if ((m = line.match(/^(#{1,6})\s+(.*)/))) { flush(); closeList(); out += `<h3>${inline(m[2])}</h3>`; }
+        else if ((m = line.match(/^\s*[-*]\s+(.*)/))) { flush(); if (list !== "ul") { closeList(); out += "<ul>"; list = "ul"; } out += `<li>${inline(m[1])}</li>`; }
+        else if ((m = line.match(/^\s*\d+[.)]\s+(.*)/))) { flush(); if (list !== "ol") { closeList(); out += "<ol>"; list = "ol"; } out += `<li>${inline(m[1])}</li>`; }
+        else if (!line.trim()) { flush(); closeList(); }
+        else para.push(line);
+      }
+      flush(); closeList(); if (code) out += "</code></pre>";
+      return out;
+    }
+
+    // ---- panel ------------------------------------------------------------------------------
+    function showPanel(title, html) {
+      el("panel-title").textContent = title;
+      el("panel-body").innerHTML = html;
+      el("panel").hidden = false;
+    }
+    function closePanel() {
+      el("panel").hidden = true;
+      selected = null;
+      setUrl();
+      render();
+    }
+    el("close-panel").addEventListener("click", closePanel);
+    function setUrl() {
+      const u = new URL(location.href);
+      u.searchParams.set("tab", tab);
+      selected ? u.searchParams.set("skill", selected) : u.searchParams.delete("skill");
+      history.replaceState(null, "", u);
+    }
+
+    // ---- library ----------------------------------------------------------------------------
+    function sourceCell(s) {
+      if (s.source === "bundled") return `<span class="pill bundled">bundled</span>`;
+      if (s.source === "github") return `<a href="${esc(s.source_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">GitHub</a>`;
+      return `<span class="pill">${esc(s.source)}</span>`;
+    }
+    function renderLibrary() {
+      el("c-library").textContent = library.length;
+      if (!library.length) { el("content").innerHTML = `<div class="empty">No skills yet. Add one, or install from Suggested.</div>`; return; }
+      el("content").innerHTML = `<table><thead><tr><th>Skill</th><th>Source</th><th>Version</th><th>Agents</th><th>All agents</th></tr></thead><tbody>${
+        library.map((s) => `<tr data-name="${esc(s.name)}" class="${s.name === selected ? "selected" : ""}">
+          <td><strong>${esc(s.name)}</strong><div class="desc">${esc(s.description)}</div></td>
+          <td>${sourceCell(s)}</td>
+          <td class="meta">${esc(s.version ?? "—")}</td>
+          <td>${s.all_agents ? "all" : s.agents}</td>
+          <td><label class="switch" onclick="event.stopPropagation()"><input type="checkbox" data-all="${esc(s.name)}" ${s.all_agents ? "checked" : ""}></label></td>
+        </tr>`).join("")
+      }</tbody></table>`;
+      el("content").querySelectorAll("tr[data-name]").forEach((tr) => tr.addEventListener("click", () => openSkill(tr.dataset.name)));
+      el("content").querySelectorAll("[data-all]").forEach((box) => box.addEventListener("change", async () => {
+        try { await api("PATCH", `/api/skills/${box.dataset.all}`, { all_agents: box.checked }); await loadLibrary(); }
+        catch (err) { el("error").textContent = err.message; box.checked = !box.checked; }
+      }));
+    }
+
+    async function openSkill(name) {
+      selected = name;
+      setUrl();
+      render();
+      showPanel(name, `<div class="empty">Loading…</div>`);
+      let s;
+      try { s = await api("GET", `/api/skills/${encodeURIComponent(name)}`); }
+      catch (err) { showPanel(name, `<div class="error">${esc(err.message)}</div>`); return; }
+      const has = new Set(s.agent_list.map((a) => a.id));
+      showPanel(s.name, `
+        <div class="meta">${sourceCell(s)} ${s.version ? `· v${esc(s.version)}` : ""} · ${size(s.size)} · ${s.files.length} file(s) · updated ${when(s.updated_at)}${s.license ? ` · license: ${esc(s.license)}` : ""}</div>
+        <p class="desc">${esc(s.description)}</p>
+        <label>Agents</label>
+        ${s.all_agents ? `<div class="meta">Every agent has it (All agents is on).</div>` : `
+          <div class="agents-pick">${agents.map((a) => `<label><input type="checkbox" data-agent="${esc(a.id)}" ${has.has(a.id) ? "checked" : ""}> ${esc(a.name)} <span class="meta">${esc(a.tier)}</span></label>`).join("") || `<div class="meta">No agents</div>`}</div>`}
+        <label>SKILL.md</label>
+        <div class="md">${markdown(s.skill_md)}</div>
+        <label>Files</label>
+        <ul class="files">${s.files.map((f) => `<li><a data-file="${esc(f.path)}">${esc(f.path)}</a> <span class="meta">${size(f.size)}</span></li>`).join("")}</ul>
+        <pre class="file" id="file-view" hidden></pre>
+        <div class="form-actions">
+          ${s.source === "github" ? `<button class="ghost" id="s-update">Update from source</button>` : ""}
+          ${s.source !== "bundled" ? `<button class="ghost danger" id="s-delete">Delete</button>` : ""}
+        </div>
+        <div class="error" id="s-error"></div>`);
+      document.querySelectorAll("[data-agent]").forEach((box) => box.addEventListener("change", async () => {
+        const id = box.dataset.agent;
+        try {
+          const current = await api("GET", `/api/agents/${id}/skills`);
+          const names = current.skills.filter((x) => x.assigned).map((x) => x.name).filter((n) => n !== name);
+          if (box.checked) names.push(name);
+          await api("PUT", `/api/agents/${id}/skills`, { skills: names });
+          await loadLibrary();
+        } catch (err) { el("s-error").textContent = err.message; box.checked = !box.checked; }
+      }));
+      document.querySelectorAll("[data-file]").forEach((a) => a.addEventListener("click", async () => {
+        const res = await fetch(`/api/skills/${encodeURIComponent(name)}/file?path=${encodeURIComponent(a.dataset.file)}`);
+        const view = el("file-view");
+        view.textContent = await res.text();
+        view.hidden = false;
+      }));
+      el("s-delete")?.addEventListener("click", async () => {
+        if (!confirm(`Delete ${name}? Agents that have it lose it.`)) return;
+        try { await api("DELETE", `/api/skills/${encodeURIComponent(name)}`); closePanel(); await loadLibrary(); }
+        catch (err) { el("s-error").textContent = err.message; }
+      });
+      el("s-update")?.addEventListener("click", async (e) => {
+        e.target.disabled = true; e.target.textContent = "Fetching…";
+        try { review(await api("POST", `/api/skills/${encodeURIComponent(name)}/update`), true); }
+        catch (err) { el("s-error").textContent = err.message; e.target.disabled = false; e.target.textContent = "Update from source"; }
+      });
+    }
+
+    // ---- add + review -----------------------------------------------------------------------
+    function openAdd(prefillUrl) {
+      selected = null;
+      setUrl();
+      showPanel("Add skill", `
+        <label for="a-url">From GitHub</label>
+        <input id="a-url" placeholder="https://github.com/cloudflare/skills/tree/main/skills/wrangler" value="${esc(prefillUrl ?? "")}">
+        <div class="meta">A public folder with SKILL.md at its root.</div>
+        <div class="form-actions"><button class="primary" id="a-github">Preview</button></div>
+        <label>Or upload a zip</label>
+        <div class="drop" id="a-drop">Drop a .zip of one skill folder here, or <a id="a-pick" style="cursor:pointer">choose a file</a><input type="file" id="a-file" accept=".zip,application/zip" hidden></div>
+        <label for="a-paste">Or paste a SKILL.md</label>
+        <textarea id="a-paste" style="min-height:140px" placeholder="---
+name: release-notes
+description: How we write release notes. Use when a task asks for release notes.
+---
+
+# Release notes
+..."></textarea>
+        <div class="form-actions"><button class="ghost" id="a-pasted">Preview</button></div>
+        <div class="error" id="a-error"></div>`);
+      const run = async (btn, fn) => {
+        el("a-error").textContent = "";
+        const label = btn?.textContent;
+        if (btn) { btn.disabled = true; btn.textContent = "Loading…"; }
+        try { review(await fn(), false); }
+        catch (err) { el("a-error").textContent = err.message; if (btn) { btn.disabled = false; btn.textContent = label; } }
+      };
+      el("a-github").addEventListener("click", (e) => run(e.target, () => api("POST", "/api/skills/preview", { url: el("a-url").value })));
+      el("a-pasted").addEventListener("click", (e) => run(e.target, () => api("POST", "/api/skills/preview", { skill_md: el("a-paste").value })));
+      const upload = (file) => run(null, async () => api("POST", "/api/skills/preview", null, await file.arrayBuffer()));
+      el("a-pick").addEventListener("click", () => el("a-file").click());
+      el("a-file").addEventListener("change", () => el("a-file").files[0] && upload(el("a-file").files[0]));
+      const drop = el("a-drop");
+      drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+      drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+      drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); e.dataTransfer.files[0] && upload(e.dataTransfer.files[0]); });
+      if (prefillUrl) el("a-github").click();
+    }
+
+    function review(p, isUpdate) {
+      const files = Object.keys(p.files);
+      showPanel(`Review: ${p.name}`, `
+        <div class="warn">Skills are instructions your agents will follow. Read them like code before installing.</div>
+        <div class="meta">${esc(p.source)}${p.source_url ? ` · <a href="${esc(p.source_url)}" target="_blank" rel="noopener">${esc(p.source_url)}</a>` : ""}${p.version ? ` · v${esc(p.version)}` : ""}${p.license ? ` · license: ${esc(p.license)}` : ""}</div>
+        <p><strong>${esc(p.name)}</strong></p>
+        <p class="desc">${esc(p.description)}</p>
+        ${p.exists && !isUpdate ? `<div class="warn">A skill named ${esc(p.name)} is already installed. Installing replaces it.</div>` : ""}
+        <label>SKILL.md</label>
+        <pre class="file">${esc(p.skill_md)}</pre>
+        <label>Files (${files.length})</label>
+        <ul class="files">${files.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>
+        <div class="form-actions"><button class="primary" id="r-install">${isUpdate ? "Update" : "Install"}</button><button class="ghost" id="r-cancel">Cancel</button></div>
+        <div class="error" id="r-error"></div>`);
+      el("r-cancel").addEventListener("click", closePanel);
+      el("r-install").addEventListener("click", async (e) => {
+        e.target.disabled = true;
+        try {
+          await api("POST", "/api/skills", { preview_id: p.id, replace: isUpdate || p.exists });
+          tab = "library";
+          await loadLibrary();
+          openSkill(p.name);
+        } catch (err) { el("r-error").textContent = err.message; e.target.disabled = false; }
+      });
+    }
+    el("add").addEventListener("click", () => openAdd());
+
+    // ---- suggested --------------------------------------------------------------------------
+    async function renderSuggested() {
+      el("content").innerHTML = `<div class="empty">Loading the official Cloudflare skills…</div>`;
+      try {
+        const data = await api("GET", "/api/skills/suggested");
+        el("content").innerHTML = `<p class="meta">From <a href="${esc(data.source)}" target="_blank" rel="noopener">${esc(data.source)}</a> (Apache-2.0). Installing shows the skill for review first.</p>
+          <table><thead><tr><th>Skill</th><th></th></tr></thead><tbody>${
+          data.skills.map((s) => `<tr><td><strong>${esc(s.name)}</strong><div class="desc">${esc(s.description)}</div></td>
+            <td>${s.installed ? `<span class="pill">installed</span>` : `<button class="ghost" data-url="${esc(s.url)}">Install</button>`}</td></tr>`).join("")
+        }</tbody></table>`;
+        el("content").querySelectorAll("[data-url]").forEach((b) => b.addEventListener("click", () => openAdd(b.dataset.url)));
+      } catch (err) {
+        el("content").innerHTML = `<div class="empty error">${esc(err.message)}</div>`;
+      }
+    }
+
+    function render() {
+      document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+      if (tab === "library") renderLibrary();
+    }
+
+    async function loadLibrary() {
+      const [data, a] = await Promise.all([api("GET", "/api/skills"), api("GET", "/api/agents")]);
+      library = data.skills;
+      agents = a.agents ?? [];
+      el("scripts").checked = data.settings.scripts_enabled;
+      el("c-library").textContent = library.length;
+      if (tab === "library") renderLibrary();
+    }
+
+    el("scripts").addEventListener("change", async () => {
+      try { await api("PATCH", "/api/skills/settings", { scripts_enabled: el("scripts").checked }); }
+      catch (err) { el("error").textContent = err.message; el("scripts").checked = !el("scripts").checked; }
+    });
+    document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => {
+      tab = b.dataset.tab;
+      setUrl();
+      render();
+      if (tab === "suggested") renderSuggested();
+    }));
+
+    loadLibrary()
+      .then(() => { render(); if (tab === "suggested") renderSuggested(); if (selected) openSkill(selected); })
+      .catch((err) => (el("content").innerHTML = `<div class="empty error">${esc(err.message)}</div>`));
+  </script>
+</body>
+</html>
