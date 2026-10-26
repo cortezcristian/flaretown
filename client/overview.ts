@@ -109,7 +109,7 @@ function renderCounters() {
   $("c-agents").textContent = String(c.agents);
   $("c-working").textContent = c.working ? `${c.working} working` : "all idle";
   $("c-projects").textContent = String(c.projects);
-  $("c-projects-sub").textContent = c.projects_open ? `${c.projects_open} with open work` : "no open work";
+  $("c-projects-sub").textContent = c.projects_open ? `${c.projects_open} with open tasks` : "no open tasks";
   $("c-open").textContent = String(c.open_tasks);
   $("c-review").textContent = String(c.review);
 }
