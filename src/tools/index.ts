@@ -19,6 +19,7 @@ import type { Caller } from "../services/caller";
 import { getTimezone } from "../services/settings";
 import { addEvidence, createDecision, getDecision, listDecisions, withdrawDecision } from "../services/decisions";
 import { listSkills, setAgentSkills } from "../services/skills";
+import { attachServer, detachServer, listForAgents } from "../services/mcps";
 import {
   cancelTask,
   checkCriterion,
@@ -466,18 +467,43 @@ export const allTools: ToolDef[] = [
 ];
 
 // Which tools each tier gets (SPEC-agents section 3, task authority).
+// ---- MCP servers (task 018) ----
+allTools.push(
+  defineTool({
+    name: "mcps_list",
+    description:
+      "List the MCP servers set up in Flaretown (id, name, auth, policy) and which agents have them. agent filters to one agent. Never shows secrets.",
+    input: z.object({ agent: z.string().optional().describe("Agent id") }),
+    run: (env, _caller, args) => listForAgents(env.DB_CORE, args.agent),
+  }),
+  defineTool({
+    name: "mcps_attach",
+    description:
+      "Give an agent an MCP server: its tools show up in that agent's next turn. Only servers with policy allowed and no OAuth. The Principal can attach to any agent; a Lead only to its own Operators.",
+    input: z.object({ agent: z.string().describe("Agent id"), server: z.string().describe("MCP server id, see mcps_list") }),
+    run: (env, caller, args) => attachServer(env, caller, args.agent, args.server),
+  }),
+  defineTool({
+    name: "mcps_detach",
+    description: "Remove an MCP server from an agent. The Principal can do it for any agent; a Lead only for its own Operators.",
+    input: z.object({ agent: z.string().describe("Agent id"), server: z.string().describe("MCP server id") }),
+    run: (env, caller, args) => detachServer(env, caller, args.agent, args.server),
+  }),
+);
+
 const TIER_TOOLS: Record<string, string[]> = {
   principal: allTools.map((t) => t.name),
   lead: [
     "tasks_list", "tasks_get", "tasks_update", "tasks_comment", "tasks_create_subtask",
     "tasks_check_criterion", "tasks_close", "tasks_send_back", "tasks_cancel",
     "agents_list", "agents_create", "agents_retire", "agents_set_skills", "skills_list",
+    "mcps_list", "mcps_attach", "mcps_detach",
     "routines_list", "routines_create", "routines_update", "routines_delete", "routines_run",
     "reports_save", "reports_list", "reports_read", "artifacts_write", "artifacts_read", "artifacts_list", "time_now",
     "decisions_request", "decisions_add_evidence", "decisions_get", "decisions_list", "decisions_withdraw",
   ],
   operator: [
-    "tasks_get", "tasks_update", "tasks_comment",
+    "tasks_get", "tasks_update", "tasks_comment", "mcps_list",
     "routines_list", "routines_create", "routines_update", "routines_delete", "routines_run",
     "reports_save", "reports_list", "reports_read", "artifacts_write", "artifacts_read", "artifacts_list", "time_now",
     "decisions_request", "decisions_add_evidence", "decisions_get", "decisions_list", "decisions_withdraw",

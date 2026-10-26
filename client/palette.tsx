@@ -19,6 +19,7 @@ const MENUS: Array<[string, string]> = [
   ["Artifacts", "/artifacts.html"],
   ["Containers", "/containers.html"],
   ["Skills", "/skills.html"],
+  ["MCPs", "/mcps.html"],
   ["Agents", "/agents.html"],
   ["Orchestrator", "/orchestrator.html"],
 ];

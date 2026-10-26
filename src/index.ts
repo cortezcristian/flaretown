@@ -6,6 +6,7 @@ import { handleAgentsApi } from "./api/agents";
 import { handleArtifactsApi } from "./api/artifacts";
 import { handleContainersApi } from "./api/containers";
 import { handleDecisionsApi } from "./api/decisions";
+import { handleMcpsApi } from "./api/mcps";
 import { handleSkillsApi } from "./api/skills";
 import { handleOrchestratorApi } from "./api/orchestrator";
 import { handleOverviewApi } from "./api/overview";
@@ -59,6 +60,8 @@ async function health(env: Env): Promise<Response> {
 const CHAT_PATH = /^\/api\/agents\/([a-z0-9-]+)\/chat(?:\/.*)?$/;
 // A container's desktop (noVNC, HTTP + WebSocket), same origin as the UI: /container/<agent-id>/view[/...]
 const VIEW_PATH = /^\/container\/([a-z0-9-]+)\/view(\/.*)?$/;
+// OAuth callback of an MCP server attached to an agent (task 018): finished in that agent's DO.
+const MCP_OAUTH_PATH = /^\/mcp\/oauth\/callback\/([a-z0-9-]+)\/[a-z0-9-]+$/;
 
 export default {
   async fetch(request, env, ctx): Promise<Response> {
@@ -88,7 +91,14 @@ export default {
       return stub ? stub.fetch(request) : notFound(`No agent ${id}.`);
     }
 
+    const oauth = pathname.match(MCP_OAUTH_PATH);
+    if (oauth) {
+      const stub = await agentChatStub(env, oauth[1]!);
+      return stub ? stub.fetch(request) : notFound(`No agent ${oauth[1]}.`);
+    }
+
     const apiResponse =
+      (await handleMcpsApi(request, env, pathname)) ??
       (await handleContainersApi(request, env, pathname)) ??
       (await handleDecisionsApi(request, env, pathname)) ??
       (await handleSkillsApi(request, env, pathname)) ??

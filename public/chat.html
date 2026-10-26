@@ -95,6 +95,17 @@
     .cdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
     .cdot.on { background: #16a34a; }
     .menu .chip { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; }
+    /* MCPs panel (task 018) */
+    .cdot.warn { background: #d97706; }
+    .mcp-status { font-size: 11px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+    .mcp-status.ready { color: #16a34a; border-color: #16a34a; }
+    .mcp-status.failed { color: #dc2626; border-color: #dc2626; }
+    .mcp-status.authenticating { color: #d97706; border-color: #d97706; }
+    .row-actions { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+    .row-actions select { flex: 1; min-width: 0; }
+    .row-actions a.button { padding: 4px 10px; border-radius: 8px; background: var(--accent); color: #fff; text-decoration: none; font-size: 13px; }
+    .mcp-tools { list-style: none; padding: 0; margin: 4px 0; font-size: 12px; }
+    .mcp-tools li { padding: 2px 0; border: 0; }
     .container-panel { display: flex; flex-direction: column; gap: 8px; }
     .container-panel p { margin: 0; }
     .container-panel .vnc { width: 100%; height: calc(100vh - 150px); border: 1px solid var(--border); border-radius: 8px; background: #000; }

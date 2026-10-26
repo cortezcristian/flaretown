@@ -7,6 +7,7 @@ import { CLEF_LABEL, type ClefModel, type DecisionAnswer, type DecisionQuestion,
 import { ServiceError } from "./errors";
 
 export type DecisionStatus = "pending" | "approved" | "rejected" | "withdrawn";
+export type DecisionKind = "general" | "mcp_call";
 export type EvidenceKind = "text" | "link" | "report" | "artifact" | "command";
 export const EVIDENCE_KINDS: EvidenceKind[] = ["text", "link", "report", "artifact", "command"];
 
@@ -27,6 +28,10 @@ export interface Decision {
   description: string;
   task_id: string | null;
   task_identifier: string | null;
+  // "general", or "mcp_call": approves one exact MCP tool call (policy ask, task 018).
+  kind: DecisionKind;
+  payload: string | null;
+  consumed_at: string | null;
   requested_by: string;
   status: DecisionStatus;
   decided_by: string | null;
@@ -177,6 +182,8 @@ export interface CreateDecisionInput {
   description: string;
   evidence: EvidenceInput[];
   task?: string;
+  kind?: DecisionKind;
+  payload?: string;
 }
 
 export async function createDecision(db: D1Database, caller: Caller, input: CreateDecisionInput): Promise<DecisionDetail> {
@@ -209,10 +216,10 @@ export async function createDecision(db: D1Database, caller: Caller, input: Crea
   await db.batch([
     db
       .prepare(
-        `INSERT INTO decisions (id, identifier, title, description, task_id, requested_by, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO decisions (id, identifier, title, description, task_id, kind, payload, requested_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .bind(id, `DEC-${counter.value}`, title, description, taskId, by, ts, ts),
+      .bind(id, `DEC-${counter.value}`, title, description, taskId, input.kind ?? "general", input.payload ?? null, by, ts, ts),
     ...evidence.map((e, i) =>
       db
         .prepare("INSERT INTO decision_evidence (id, decision_id, position, kind, label, content, added_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
@@ -549,4 +556,27 @@ export async function hasApprovedDecision(db: D1Database, taskId: string): Promi
     .bind(taskId)
     .first<{ n: number }>();
   return (row?.n ?? 0) > 0;
+}
+
+// ---- MCP calls that need approval (policy ask, task 018) -----------------------------------
+
+// The open (pending, or approved and not used yet) mcp_call Decision for this exact call.
+export async function findMcpCallDecision(db: D1Database, agentId: string, payload: string): Promise<Decision | null> {
+  const row = await db
+    .prepare(
+      `${SELECT} WHERE d.kind = 'mcp_call' AND d.requested_by = ? AND d.payload = ? AND d.consumed_at IS NULL
+         AND d.status IN ('pending', 'approved') ORDER BY d.created_at DESC LIMIT 1`,
+    )
+    .bind(agentId, payload)
+    .first<DecisionRow>();
+  return row ? withDerived(row) : null;
+}
+
+// Mark an approved mcp_call Decision as used: it lets exactly one call through.
+export async function consumeDecision(db: D1Database, id: string): Promise<boolean> {
+  const res = await db
+    .prepare("UPDATE decisions SET consumed_at = ?, updated_at = ? WHERE id = ? AND status = 'approved' AND consumed_at IS NULL")
+    .bind(now(), now(), id)
+    .run();
+  return (res.meta.changes ?? 0) > 0;
 }

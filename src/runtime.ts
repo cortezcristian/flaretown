@@ -4,6 +4,7 @@
 import { waitUntil } from "cloudflare:workers";
 import { getAgentByName } from "agents";
 import { evaluateDecision } from "./services/decisions";
+import type { AttachRequest, AttachResult, LiveMcpStatus } from "./services/mcps";
 
 export const PRINCIPAL_INSTANCE = "default";
 
@@ -23,6 +24,9 @@ export interface AgentRpc {
   containerStop(): Promise<unknown>;
   containerResetProfile(): Promise<unknown>;
   containerChanged(imageChanged: boolean): Promise<unknown>;
+  mcpAttach(input: AttachRequest): Promise<AttachResult>;
+  mcpDetach(serverId: string): Promise<void>;
+  mcpStatus(): Promise<LiveMcpStatus>;
 }
 
 export async function agentStub(env: Env, agentId: string): Promise<AgentRpc> {
@@ -120,6 +124,8 @@ type DecidedDecision = {
   decided_by: string | null;
   decision_comment: string | null;
   task_identifier: string | null;
+  kind?: string;
+  payload?: string | null;
 };
 
 // Tell the requesting agent how its Decision ended, in its chat, so it can act on it.
@@ -127,8 +133,11 @@ export function notifyDecision(env: Env, decision: DecidedDecision) {
   if (decision.requested_by === "human" || decision.requested_by === "orchestrator") return;
   const who = decision.decided_by === "human" ? "the human" : decision.decided_by ?? "someone";
   const verdict = decision.status === "approved" ? "APPROVED" : decision.status === "rejected" ? "REJECTED" : decision.status.toUpperCase();
+  const mcpCall = decision.kind === "mcp_call" ? mcpCallOf(decision.payload) : null;
   const next =
-    decision.status === "approved"
+    mcpCall && decision.status === "approved"
+      ? `Call ${mcpCall.tool} again now with exactly the same arguments: it will run once.`
+      : decision.status === "approved"
       ? "Go ahead with it as proposed (the How below)."
       : decision.status === "rejected"
         ? "Don't do it. Adjust the plan, or stop and explain on the task."
@@ -141,6 +150,15 @@ export function notifyDecision(env: Env, decision: DecidedDecision) {
     agentStub(env, decision.requested_by).then((a) => a.say(text)),
     `notify ${decision.requested_by} of ${decision.identifier} failed`,
   );
+}
+
+function mcpCallOf(payload: string | null | undefined): { tool: string } | null {
+  try {
+    const p = JSON.parse(payload ?? "") as { tool_key?: string };
+    return p.tool_key ? { tool: p.tool_key } : null;
+  } catch {
+    return null;
+  }
 }
 
 // Run Clef on a Decision in the background; in System One it may decide, then tell the agent.

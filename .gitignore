@@ -152,6 +152,7 @@ vite.config.ts.timestamp-*
 .wrangler/
 .dev.vars
 .dev.vars.*
+!.dev.vars.example
 worker-configuration.d.ts
 public/chat.js
 public/overview.js

@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flaretown · MCPs</title>
+  <link rel="stylesheet" href="/ui.css">
+  <style>
+    .inner.wide { max-width: 1200px; }
+    .pill { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; color: var(--muted); }
+    .pill.ready, .pill.allowed { color: #16a34a; border-color: #16a34a; }
+    .pill.ask, .pill.authenticating { color: #d97706; border-color: #d97706; }
+    .pill.failed { color: #dc2626; border-color: #dc2626; }
+    .desc { color: var(--muted); font-size: 13px; }
+    td .ghost, td .primary { padding: 3px 10px; font-size: 13px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin-bottom: 20px; }
+    .card { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--card); cursor: pointer; }
+    .card:hover, .card.selected { border-color: var(--accent); }
+    .card .top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+    .card .meta { margin-top: 6px; }
+    h3.section { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 16px 0 8px; }
+    .banner { font-size: 13px; padding: 10px 12px; border-radius: 8px; margin: 8px 0 14px; border: 1px solid var(--border); }
+    .banner.bad { background: color-mix(in srgb, #dc2626 10%, transparent); border-color: #dc2626; }
+    .banner.ok { background: color-mix(in srgb, #16a34a 8%, transparent); }
+    .banner code, .desc code { font-family: ui-monospace, monospace; font-size: 12px; background: var(--bg); padding: 1px 4px; border-radius: 4px; }
+    .hdr { display: grid; grid-template-columns: 1fr 1.6fr auto; gap: 6px; margin: 4px 0; }
+    .hdr input { margin: 0; }
+    .agents-list { list-style: none; padding: 0; margin: 0; font-size: 14px; }
+    .agents-list li { padding: 6px 0; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .agents-list .grow { flex: 1; }
+    .agents-list .err { flex-basis: 100%; color: #dc2626; font-size: 12px; }
+    .row { display: flex; gap: 6px; align-items: center; }
+    .row select { flex: 1; }
+    pre.json { white-space: pre-wrap; word-break: break-word; background: var(--bg); padding: 8px; border-radius: 6px; font-size: 12px; max-height: 360px; overflow: auto; }
+    textarea.json { min-height: 220px; font-family: ui-monospace, monospace; font-size: 12px; }
+    tbody tr[data-id] { cursor: pointer; }
+    .warn { font-size: 13px; padding: 8px 10px; border-radius: 8px; margin: 8px 0; background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  </style>
+  <script src="/nav.js" defer></script>
+</head>
+<body>
+  <div class="layout">
+    <main>
+      <div class="inner wide">
+        <header>
+          <h1>MCPs</h1>
+          <div class="actions"><button class="primary" id="add">+ Add server</button></div>
+        </header>
+        <div class="tabs">
+          <button data-tab="servers">Servers<span class="count" id="c-servers"></span></button>
+          <button data-tab="secrets">Secrets<span class="count" id="c-secrets"></span></button>
+          <button data-tab="import">Import / export</button>
+        </div>
+        <div class="error" id="error"></div>
+        <div id="content"><div class="empty">Loading…</div></div>
+      </div>
+    </main>
+    <aside id="panel" hidden>
+      <div class="head">
+        <h2 id="panel-title"></h2>
+        <button class="close-panel" id="close-panel" aria-label="Close panel">×</button>
+      </div>
+      <div id="panel-body"></div>
+    </aside>
+  </div>
+
+  <script>
+    const el = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+    const when = (iso) => (iso ? new Date(iso).toLocaleString() : "—");
+    const params = new URLSearchParams(location.search);
+    let tab = params.get("tab") || "servers";
+    let selected = params.get("server");
+    let servers = [];
+    let secrets = [];
+    let status = null;
+    let agents = [];
+
+    async function api(method, url, body) {
+      const res = await fetch(url, { method, headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined });
+      const out = await res.json();
+      if (!res.ok) throw new Error(`${out.error}${out.hint ? ` (${out.hint})` : ""}`);
+      return out;
+    }
+
+    function showPanel(title, html) {
+      el("panel-title").textContent = title;
+      el("panel-body").innerHTML = html;
+      el("panel").hidden = false;
+    }
+    function closePanel() {
+      el("panel").hidden = true;
+      selected = null;
+      setUrl();
+      render();
+    }
+    el("close-panel").addEventListener("click", closePanel);
+    function setUrl() {
+      const u = new URL(location.href);
+      u.searchParams.set("tab", tab);
+      selected ? u.searchParams.set("server", selected) : u.searchParams.delete("server");
+      history.replaceState(null, "", u);
+    }
+
+    const authLabel = (a) => ({ none: "No auth", headers: "Headers", oauth: "OAuth sign-in" })[a] ?? a;
+    const policyLabel = (p) => ({ allowed: "allowed", ask: "ask before writes", off: "off" })[p] ?? p;
+
+    // ---- servers ----------------------------------------------------------------------------
+    function renderServers() {
+      el("c-servers").textContent = servers.length;
+      const builtin = servers.filter((s) => s.builtin);
+      const custom = servers.filter((s) => !s.builtin);
+      el("content").innerHTML = `
+        <h3 class="section">Cloudflare</h3>
+        <div class="cards">${builtin.map((s) => `
+          <div class="card ${s.id === selected ? "selected" : ""}" data-id="${esc(s.id)}">
+            <div class="top"><strong>${esc(s.name)}</strong><span class="pill ${esc(s.policy)}">${esc(policyLabel(s.policy))}</span></div>
+            <div class="desc">${esc(s.description)}</div>
+            <div class="meta">${esc(authLabel(s.auth))} · ${s.agents.length} agent(s)</div>
+          </div>`).join("")}</div>
+        <h3 class="section">Custom</h3>
+        ${custom.length ? `<table><thead><tr><th>Server</th><th>URL</th><th>Auth</th><th>Policy</th><th>Agents</th></tr></thead><tbody>${
+          custom.map((s) => `<tr data-id="${esc(s.id)}" class="${s.id === selected ? "selected" : ""}">
+            <td><strong>${esc(s.name)}</strong><div class="desc">${esc(s.id)}</div></td>
+            <td class="meta">${esc(s.url)}</td>
+            <td>${esc(authLabel(s.auth))}${s.missing_secrets.length ? `<div class="desc" style="color:#dc2626">missing ${esc(s.missing_secrets.join(", "))}</div>` : ""}</td>
+            <td><span class="pill ${esc(s.policy)}">${esc(policyLabel(s.policy))}</span></td>
+            <td>${s.agents.length}</td>
+          </tr>`).join("")}</tbody></table>`
+          : `<div class="empty">No custom servers. Add one, or import your editor's mcpServers JSON.</div>`}`;
+      el("content").querySelectorAll("[data-id]").forEach((n) => n.addEventListener("click", () => openServer(n.dataset.id)));
+    }
+
+    function headerRows(headers) {
+      const entries = Object.entries(headers ?? {});
+      if (!entries.length) entries.push(["", ""]);
+      return entries.map(([k, v]) => `<div class="hdr"><input class="h-name" placeholder="Authorization" value="${esc(k)}"><input class="h-value" placeholder="Bearer \${GITHUB_TOKEN}" value="${esc(v)}"><button type="button" class="ghost h-del">×</button></div>`).join("");
+    }
+
+    function serverForm(s) {
+      const isNew = !s;
+      const builtin = s?.builtin;
+      return `
+        <form id="s-form">
+          ${isNew ? `<label for="s-id">Id</label><input id="s-id" required placeholder="e.g. github" pattern="[a-z][a-z0-9-]{0,47}"><div class="meta">Lowercase, digits and dashes. Agents see its tools as tool_&lt;id&gt;_&lt;tool&gt;.</div>` : ""}
+          <label for="s-name">Name</label><input id="s-name" value="${esc(s?.name ?? "")}" ${builtin ? "disabled" : ""} placeholder="GitHub">
+          <label for="s-url">URL</label><input id="s-url" value="${esc(s?.url ?? "")}" ${builtin ? "disabled" : ""} placeholder="https://api.githubcopilot.com/mcp/">
+          <label for="s-transport">Transport</label>
+          <select id="s-transport" ${builtin ? "disabled" : ""}>${["auto", "streamable-http", "sse"].map((t) => `<option ${s?.transport === t ? "selected" : ""}>${t}</option>`).join("")}</select>
+          <label for="s-auth">Auth</label>
+          <select id="s-auth" ${builtin ? "disabled" : ""}>${["none", "headers", "oauth"].map((a) => `<option value="${a}" ${s?.auth === a ? "selected" : ""}>${esc(authLabel(a))}</option>`).join("")}</select>
+          <div id="s-headers-wrap" ${(s?.auth ?? "none") === "headers" ? "" : "hidden"}>
+            <label>Headers</label>
+            <div class="meta">Write credentials as secret references: <code>Bearer \${GITHUB_TOKEN}</code>. Values live under Secrets, encrypted.</div>
+            <div id="s-headers">${headerRows(s?.headers)}</div>
+            <div class="row" style="margin-top:6px">
+              <select id="s-secret"><option value="">Insert a secret…</option>${secrets.map((x) => `<option value="${esc(x.name)}">${esc(x.name)}</option>`).join("")}</select>
+              <button type="button" class="ghost" id="s-add-header">+ Header</button>
+            </div>
+          </div>
+          <label for="s-policy">Policy</label>
+          <select id="s-policy">${["allowed", "ask", "off"].map((p) => `<option value="${p}" ${(s?.policy ?? "allowed") === p ? "selected" : ""}>${esc(policyLabel(p))}</option>`).join("")}</select>
+          <div class="meta">Ask: every call that may change something (tools without readOnlyHint) becomes a Decision first. Off: hidden from every agent.</div>
+          <label for="s-desc">Description</label><input id="s-desc" value="${esc(s?.description ?? "")}">
+          <div class="form-actions"><button class="primary" type="submit">${isNew ? "Add server" : "Save"}</button>
+            ${s && !builtin ? `<button type="button" class="ghost danger" id="s-delete">Delete</button>` : ""}</div>
+          <div class="error" id="s-error"></div>
+        </form>`;
+    }
+
+    function wireForm(s) {
+      el("s-auth").addEventListener("change", () => (el("s-headers-wrap").hidden = el("s-auth").value !== "headers"));
+      const wireRows = () => document.querySelectorAll(".h-del").forEach((b) => (b.onclick = () => { b.parentElement.remove(); }));
+      wireRows();
+      let lastValue = null;
+      document.addEventListener("focusin", (e) => { if (e.target.classList?.contains("h-value")) lastValue = e.target; });
+      el("s-add-header").addEventListener("click", () => { el("s-headers").insertAdjacentHTML("beforeend", headerRows({ "": "" })); wireRows(); });
+      el("s-secret").addEventListener("change", () => {
+        const name = el("s-secret").value;
+        if (!name) return;
+        const target = lastValue ?? document.querySelector(".h-value");
+        if (target) target.value = (target.value ? `${target.value.replace(/\s+$/, "")} ` : "Bearer ") + `\${${name}}`;
+        el("s-secret").value = "";
+      });
+      el("s-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        el("s-error").textContent = "";
+        const headers = {};
+        document.querySelectorAll(".hdr").forEach((row) => {
+          const k = row.querySelector(".h-name").value.trim();
+          const v = row.querySelector(".h-value").value.trim();
+          if (k) headers[k] = v;
+        });
+        const body = s?.builtin
+          ? { policy: el("s-policy").value }
+          : {
+              name: el("s-name").value, url: el("s-url").value, transport: el("s-transport").value, auth: el("s-auth").value,
+              headers: el("s-auth").value === "headers" ? headers : {}, policy: el("s-policy").value, description: el("s-desc").value,
+            };
+        try {
+          const out = s ? await api("PATCH", `/api/mcps/${s.id}`, body) : await api("POST", "/api/mcps", { id: el("s-id").value, ...body });
+          await load();
+          openServer(out.id);
+        } catch (err) { el("s-error").textContent = err.message; }
+      });
+      el("s-delete")?.addEventListener("click", async () => {
+        if (!confirm(`Delete ${s.name}? It's detached from every agent.`)) return;
+        try { await api("DELETE", `/api/mcps/${s.id}`); closePanel(); await load(); }
+        catch (err) { el("s-error").textContent = err.message; }
+      });
+    }
+
+    function openAdd() {
+      selected = null;
+      setUrl();
+      render();
+      showPanel("Add MCP server", `<p class="desc">Remote servers only (Streamable HTTP or SSE). Local <code>command</code> servers can't run on Workers.</p>${serverForm(null)}`);
+      wireForm(null);
+    }
+    el("add").addEventListener("click", openAdd);
+
+    async function openServer(id) {
+      selected = id;
+      setUrl();
+      render();
+      let s;
+      try { s = await api("GET", `/api/mcps/${encodeURIComponent(id)}`); }
+      catch (err) { showPanel(id, `<div class="error">${esc(err.message)}</div>`); return; }
+      const free = agents.filter((a) => !s.agents.some((x) => x.agent_id === a.id));
+      showPanel(s.name, `
+        <div class="meta">${esc(s.id)} · ${esc(s.url)}${s.builtin ? " · Cloudflare" : ""}</div>
+        ${s.missing_secrets.length ? `<div class="warn">Missing secrets: ${esc(s.missing_secrets.join(", "))}. Add them under Secrets before attaching.</div>` : ""}
+        ${s.auth === "oauth" ? `<div class="desc">OAuth: each agent signs in on its own (Connect opens the consent page).</div>` : ""}
+        <label>Agents</label>
+        <ul class="agents-list">${s.agents.map((a) => `<li>
+          <span class="grow">${esc(a.agent_name)} <span class="meta">${esc(a.agent_id)}</span></span>
+          <span class="pill ${esc(a.status)}">${esc(a.status)}</span>
+          ${a.status === "authenticating" && a.auth_url ? `<a class="primary" style="padding:3px 10px;border-radius:8px;text-decoration:none;color:#fff" href="${esc(a.auth_url)}" target="_blank" rel="noopener">Connect</a>`
+            : `<button class="ghost" data-reconnect="${esc(a.agent_id)}">Reconnect</button>`}
+          <button class="ghost" data-detach="${esc(a.agent_id)}">Detach</button>
+          ${a.error ? `<span class="err">${esc(a.error)}</span>` : ""}
+        </li>`).join("") || `<li class="meta">Not attached to any agent.</li>`}</ul>
+        ${s.policy !== "off" && !s.missing_secrets.length && free.length ? `<div class="row" style="margin-top:8px">
+          <select id="a-agent">${free.map((a) => `<option value="${esc(a.id)}">${esc(a.name)} (${esc(a.tier)})</option>`).join("")}</select>
+          <button class="ghost" id="a-attach">Attach</button></div>` : ""}
+        ${s.agents.length ? `<div class="form-actions"><button class="ghost" id="a-all">Reconnect all</button></div>` : ""}
+        <div class="error" id="a-error"></div>
+        <h3 class="section">Settings</h3>
+        ${s.builtin ? `<div class="desc">Cloudflare's server: only the policy can change.</div>` : ""}
+        ${serverForm(s)}`);
+      wireForm(s);
+      const run = async (fn) => {
+        el("a-error").textContent = "";
+        try {
+          const out = await fn();
+          if (out?.status === "authenticating" && out.auth_url) window.open(out.auth_url, "_blank", "noopener");
+          await load();
+          openServer(id);
+        } catch (err) { el("a-error").textContent = err.message; }
+      };
+      el("a-attach")?.addEventListener("click", (e) => { e.target.disabled = true; e.target.textContent = "Attaching…"; run(() => api("POST", `/api/agents/${el("a-agent").value}/mcps`, { server: id })); });
+      el("a-all")?.addEventListener("click", (e) => { e.target.disabled = true; run(() => api("POST", `/api/mcps/${id}/reconnect`)); });
+      document.querySelectorAll("[data-reconnect]").forEach((b) => b.addEventListener("click", () => { b.disabled = true; run(() => api("POST", `/api/agents/${b.dataset.reconnect}/mcps/${id}`)); }));
+      document.querySelectorAll("[data-detach]").forEach((b) => b.addEventListener("click", () => run(() => api("DELETE", `/api/agents/${b.dataset.detach}/mcps/${id}`))));
+    }
+
+    // ---- secrets ----------------------------------------------------------------------------
+    function keyBanner() {
+      if (!status) return "";
+      if (!status.key_valid) {
+        return `<div class="banner bad"><strong>${status.key_set ? "FLARETOWN_SECRETS_KEY is not a valid key." : "Secrets are not set up."}</strong><br>
+          Generate a key with <code>openssl rand -base64 32</code>, then set it as a Worker secret: <code>pnpm wrangler secret put FLARETOWN_SECRETS_KEY</code>
+          (or Workers &amp; Pages → your Worker → Settings → Variables and Secrets). Keep a copy somewhere safe: losing it loses these secrets.
+          MCP servers without auth work without it.</div>`;
+      }
+      const notes = [];
+      if (status.on_previous_key) notes.push(`${status.on_previous_key} secret(s) still use the previous key: <button class="ghost" id="reencrypt" style="padding:2px 8px">Re-encrypt all</button>`);
+      if (status.unreadable) notes.push(`${status.unreadable} secret(s) were encrypted with a key that's gone: replace their values.`);
+      return `<div class="banner ${notes.length ? "bad" : "ok"}">Secrets are encrypted with FLARETOWN_SECRETS_KEY${status.previous_key ? " (previous key also set)" : ""}. Values are never shown again after you save them.${notes.length ? `<br>${notes.join("<br>")}` : ""}</div>`;
+    }
+
+    function renderSecrets() {
+      el("c-secrets").textContent = secrets.length;
+      el("content").innerHTML = `${keyBanner()}
+        ${status?.key_valid ? `<div class="form-actions" style="justify-content:flex-start;margin-bottom:10px"><button class="primary" id="new-secret">+ Add secret</button></div>` : ""}
+        ${secrets.length ? `<table><thead><tr><th>Name</th><th>Value</th><th>Used by</th><th>Updated</th><th></th></tr></thead><tbody>${
+          secrets.map((x) => `<tr>
+            <td><strong>${esc(x.name)}</strong>${x.description ? `<div class="desc">${esc(x.description)}</div>` : ""}</td>
+            <td class="meta">${esc(x.masked)}${x.readable ? "" : ` <span class="pill failed">unreadable</span>`}</td>
+            <td>${x.used_by.map((s) => `<a href="?tab=servers&server=${esc(s)}">${esc(s)}</a>`).join(", ") || `<span class="meta">—</span>`}</td>
+            <td class="meta">${esc(when(x.updated_at))}</td>
+            <td>${status?.key_valid ? `<button class="ghost" data-replace="${esc(x.name)}">Replace</button> ` : ""}<button class="ghost danger" data-delete="${esc(x.name)}">Delete</button></td>
+          </tr>`).join("")}</tbody></table>` : `<div class="empty">No secrets yet.</div>`}`;
+      el("new-secret")?.addEventListener("click", () => secretForm(null));
+      el("reencrypt")?.addEventListener("click", async (e) => {
+        e.target.disabled = true;
+        try { const r = await api("POST", "/api/secrets/reencrypt"); el("error").textContent = r.skipped ? `${r.skipped} could not be read.` : ""; await load(); }
+        catch (err) { el("error").textContent = err.message; }
+      });
+      document.querySelectorAll("[data-replace]").forEach((b) => b.addEventListener("click", () => secretForm(secrets.find((x) => x.name === b.dataset.replace))));
+      document.querySelectorAll("[data-delete]").forEach((b) => b.addEventListener("click", async () => {
+        const x = secrets.find((s) => s.name === b.dataset.delete);
+        if (!confirm(`Delete ${x.name}?${x.used_by.length ? ` ${x.used_by.join(", ")} use it and will fail to connect.` : ""}`)) return;
+        try { await api("DELETE", `/api/secrets/${x.name}`); await load(); } catch (err) { el("error").textContent = err.message; }
+      }));
+    }
+
+    function secretForm(x) {
+      showPanel(x ? `Replace ${x.name}` : "Add secret", `
+        <form id="x-form" autocomplete="off">
+          <label for="x-name">Name</label>
+          <input id="x-name" required pattern="[A-Z][A-Z0-9_]{0,63}" placeholder="GITHUB_TOKEN" value="${esc(x?.name ?? "")}" ${x ? "disabled" : ""}>
+          <div class="meta">UPPER_CASE. Reference it in headers as <code>\${NAME}</code>.</div>
+          <label for="x-value">Value</label>
+          <input id="x-value" type="password" required autocomplete="new-password" spellcheck="false">
+          <div class="meta">Encrypted before it's stored. Nobody can read it back here, including agents.</div>
+          <label for="x-desc">Description</label>
+          <input id="x-desc" value="${esc(x?.description ?? "")}" placeholder="GitHub fine-grained token, repo read">
+          <div class="form-actions"><button class="primary" type="submit">Save</button></div>
+          <div class="error" id="x-error"></div>
+          <div id="x-after"></div>
+        </form>`);
+      el("x-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const name = x?.name ?? el("x-name").value.trim();
+        try {
+          const out = await api("PUT", `/api/secrets/${encodeURIComponent(name)}`, { value: el("x-value").value, description: el("x-desc").value });
+          el("x-value").value = "";
+          await load();
+          const used = out.servers.filter((id) => servers.find((s) => s.id === id)?.agents.length);
+          el("x-after").innerHTML = `<div class="banner ok">Saved ${esc(name)}.${used.length ? ` Agents keep the old value until they reconnect:
+            ${used.map((id) => `<button class="ghost" data-rc="${esc(id)}" style="padding:2px 8px">Reconnect ${esc(id)}</button>`).join(" ")}` : ""}</div>`;
+          document.querySelectorAll("[data-rc]").forEach((b) => b.addEventListener("click", async () => {
+            b.disabled = true;
+            try { await api("POST", `/api/mcps/${b.dataset.rc}/reconnect`); b.textContent = `Reconnected ${b.dataset.rc}`; await load(); }
+            catch (err) { el("x-error").textContent = err.message; b.disabled = false; }
+          }));
+        } catch (err) { el("x-error").textContent = err.message; }
+      });
+    }
+
+    // ---- import / export --------------------------------------------------------------------
+    function renderImport() {
+      el("content").innerHTML = `
+        <p class="desc">Paste the <code>mcpServers</code> JSON from Claude, Cursor or VS Code (<code>servers</code>). Remote servers are added; <code>command</code> (stdio) servers are skipped.
+        <code>\${env:NAME}</code> becomes a secret reference, and literal tokens in headers are saved as encrypted secrets.</p>
+        <textarea class="json" id="i-json" placeholder='{ "mcpServers": { "github": { "type": "http", "url": "https://api.githubcopilot.com/mcp/", "headers": { "Authorization": "Bearer \${env:GITHUB_TOKEN}" } } } }'></textarea>
+        <div class="form-actions" style="justify-content:flex-start"><button class="primary" id="i-preview">Preview</button><button class="ghost" id="i-export">Export current servers</button></div>
+        <div class="error" id="i-error"></div>
+        <div id="i-out"></div>`;
+      el("i-preview").addEventListener("click", async () => {
+        el("i-error").textContent = "";
+        try {
+          const p = await api("POST", "/api/mcps/import/preview", { json: el("i-json").value });
+          el("i-out").innerHTML = `
+            <table><thead><tr><th>Server</th><th>URL</th><th>Auth</th><th></th></tr></thead><tbody>${
+              p.servers.map((s) => `<tr><td><strong>${esc(s.name)}</strong><div class="desc">${esc(s.id)}</div></td><td class="meta">${esc(s.url)}</td>
+                <td>${esc(authLabel(s.auth))}${s.extracted.length ? `<div class="desc">new secret(s): ${esc(s.extracted.join(", "))}</div>` : ""}</td>
+                <td>${s.exists ? `<span class="pill ask">exists</span>` : `<span class="pill ready">new</span>`}</td></tr>`).join("") || `<tr><td colspan="4" class="meta">Nothing to import.</td></tr>`
+            }</tbody></table>
+            ${p.skipped.length ? `<p class="desc">Skipped: ${p.skipped.map((s) => `${esc(s.name)} (${esc(s.reason)})`).join("; ")}</p>` : ""}
+            ${p.missing_secrets.length ? `<div class="warn">Add these secrets after importing: ${esc(p.missing_secrets.join(", "))}</div>` : ""}
+            ${p.servers.some((s) => s.extracted.length) && !status?.key_valid ? `<div class="warn">This JSON has tokens in clear: set FLARETOWN_SECRETS_KEY first (see Secrets).</div>` : ""}
+            ${p.servers.length ? `<div class="form-actions" style="justify-content:flex-start"><label style="display:flex;gap:6px;align-items:center;color:var(--fg)"><input type="checkbox" id="i-replace" style="width:auto"> Replace existing</label><button class="primary" id="i-go">Import</button></div>` : ""}`;
+          el("i-go")?.addEventListener("click", async (e) => {
+            e.target.disabled = true;
+            try {
+              const r = await api("POST", "/api/mcps/import", { json: el("i-json").value, replace: el("i-replace").checked });
+              el("i-json").value = "";
+              await load();
+              el("i-out").innerHTML = `<div class="banner ok">Imported ${r.imported.length} server(s)${r.secrets_created.length ? `, saved ${r.secrets_created.length} secret(s)` : ""}.
+                ${r.skipped.length ? `Skipped: ${r.skipped.map((s) => esc(s.name)).join(", ")}.` : ""} ${r.missing_secrets.length ? `Still missing: ${esc(r.missing_secrets.join(", "))}.` : ""}</div>`;
+            } catch (err) { el("i-error").textContent = err.message; e.target.disabled = false; }
+          });
+        } catch (err) { el("i-error").textContent = err.message; }
+      });
+      el("i-export").addEventListener("click", async () => {
+        try {
+          const data = await api("GET", "/api/mcps/export");
+          el("i-out").innerHTML = `<p class="desc">Secrets are references, never values.</p><pre class="json">${esc(JSON.stringify(data, null, 2))}</pre>`;
+        } catch (err) { el("i-error").textContent = err.message; }
+      });
+    }
+
+    function render() {
+      document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+      el("c-servers").textContent = servers.length;
+      el("c-secrets").textContent = secrets.length;
+      if (tab === "servers") renderServers();
+      else if (tab === "secrets") renderSecrets();
+      else if (tab !== "import" || !el("i-json")) renderImport();
+    }
+
+    async function load() {
+      const [m, x, a] = await Promise.all([api("GET", "/api/mcps"), api("GET", "/api/secrets"), api("GET", "/api/agents")]);
+      servers = m.servers;
+      secrets = x.secrets;
+      status = x.status;
+      agents = (a.agents ?? []).filter((g) => g.status !== "retired");
+      if (tab !== "import") render();
+    }
+
+    document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => {
+      tab = b.dataset.tab;
+      if (tab !== "servers") { selected = null; el("panel").hidden = true; }
+      setUrl();
+      render();
+    }));
+
+    load()
+      .then(() => { render(); if (selected && tab === "servers") openServer(selected); })
+      .catch((err) => (el("content").innerHTML = `<div class="empty error">${esc(err.message)}</div>`));
+  </script>
+</body>
+</html>

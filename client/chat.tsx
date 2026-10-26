@@ -11,7 +11,7 @@ const AGENT_ID = new URLSearchParams(location.search).get("agent") || "principal
 const CHAT_BASE_PATH = `api/agents/${AGENT_ID}/chat`;
 // From the Cmd+K palette: ?panel=tasks|config opens a side panel, ?draft=... pre-fills the composer.
 const QUERY = new URLSearchParams(location.search);
-const INITIAL_PANEL = (["tasks", "config", "container", "skills"] as const).find((p) => p === QUERY.get("panel")) ?? null;
+const INITIAL_PANEL = (["tasks", "config", "container", "skills", "mcps"] as const).find((p) => p === QUERY.get("panel")) ?? null;
 // Unsent text is kept per agent in localStorage, so a refresh doesn't lose it.
 const DRAFT_KEY = `flaretown.chat.draft.${AGENT_ID}`;
 function readDraft(): string {
@@ -100,7 +100,13 @@ function toolSummary(part: ToolPart): string {
     case "sandbox_run": return "Ran command in sandbox";
     case "sandbox_status": return "Checked sandbox";
     case "sandbox_reset": return "Reset sandbox";
-    default: return name;
+    case "mcps_list": return "Listed MCP servers";
+    case "mcps_attach": return `Attached MCP server ${String((part.input as { server?: unknown } | undefined)?.server ?? "")}`;
+    case "mcps_detach": return `Detached MCP server ${String((part.input as { server?: unknown } | undefined)?.server ?? "")}`;
+    default:
+      // MCP tools are named tool_<server>_<tool> by the Agents SDK.
+      if (name.startsWith("tool_")) return `MCP ${name.slice(5).replace("_", " · ")}`;
+      return name;
   }
 }
 
@@ -244,6 +250,126 @@ function SkillsPanel({ used, onCount }: { used: string[]; onCount: (n: number) =
         ))}
       </ul>
       {!skills.length && <p className="muted">No skills installed.</p>}
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
+type AgentMcpTool = { name: string; key: string; description: string; read_only: boolean };
+type AgentMcp = {
+  server_id: string;
+  name: string;
+  auth: string;
+  policy: string;
+  status: string;
+  auth_url: string | null;
+  error: string | null;
+  tools: AgentMcpTool[];
+};
+type McpServerSummary = { id: string; name: string; auth: string; policy: string; missing_secrets: string[] };
+
+// Right panel "MCPs" (task 018): this agent's MCP servers, status, tools; Connect for OAuth.
+function McpsPanel({ onCount }: { onCount: (n: number, attention: boolean) => void }) {
+  const [servers, setServers] = useState<AgentMcp[] | null>(null);
+  const [catalog, setCatalog] = useState<McpServerSummary[]>([]);
+  const [add, setAdd] = useState("");
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState(QUERY.get("mcp_error") ?? "");
+  const load = useCallback(() => {
+    api<{ servers: AgentMcp[] }>("GET", `/api/agents/${AGENT_ID}/mcps`)
+      .then((d) => {
+        setServers(d.servers);
+        onCount(d.servers.length, d.servers.some((s) => s.status !== "ready"));
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    api<{ servers: McpServerSummary[] }>("GET", "/api/mcps")
+      .then((d) => setCatalog(d.servers.filter((s) => s.policy !== "off")))
+      .catch(() => {});
+  }, [onCount]);
+  useEffect(load, [load]);
+  // While a server is still connecting (or waiting for OAuth in another tab), poll.
+  useEffect(() => {
+    if (!servers?.some((s) => s.status === "connecting" || s.status === "authenticating" || s.status === "pending")) return;
+    const t = setInterval(load, 4000);
+    return () => clearInterval(t);
+  }, [servers, load]);
+  const act = async (label: string, fn: () => Promise<unknown>) => {
+    setBusy(label);
+    setError("");
+    try {
+      const out = (await fn()) as { auth_url?: string | null; status?: string } | undefined;
+      if (out?.status === "authenticating" && out.auth_url) window.open(out.auth_url, "_blank", "noopener");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+    setBusy("");
+    load();
+  };
+  if (!servers) return error ? <p className="error">{error}</p> : <p className="muted">Loading…</p>;
+  const attached = new Set(servers.map((s) => s.server_id));
+  const available = catalog.filter((s) => !attached.has(s.id));
+  return (
+    <div className="skills-panel">
+      <p className="muted">
+        Tools from these servers show up in the agent's next message. <a href="/mcps.html">Manage MCPs</a>
+      </p>
+      <ul className="panel-list">
+        {servers.map((s) => (
+          <li key={s.server_id}>
+            <div>
+              <strong>{s.name}</strong> <span className={`mcp-status ${s.status}`}>{s.status}</span>
+              {s.policy === "ask" && <span className="muted"> · asks before writes</span>}
+              {s.policy === "off" && <span className="muted"> · off</span>}
+            </div>
+            {s.error && <div className="error">{s.error}</div>}
+            {s.tools.length > 0 && (
+              <details>
+                <summary className="muted">{s.tools.length} tool(s)</summary>
+                <ul className="mcp-tools">
+                  {s.tools.map((t) => (
+                    <li key={t.key} title={t.description}>
+                      <code>{t.name}</code>
+                      {t.read_only && <span className="muted"> · read-only</span>}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            <div className="row-actions">
+              {s.status === "authenticating" && s.auth_url ? (
+                <a className="button" href={s.auth_url} target="_blank" rel="noopener">
+                  Connect
+                </a>
+              ) : (
+                <button type="button" disabled={Boolean(busy)} onClick={() => act(`re-${s.server_id}`, () => api("POST", `/api/agents/${AGENT_ID}/mcps/${s.server_id}`))}>
+                  {busy === `re-${s.server_id}` ? "…" : "Reconnect"}
+                </button>
+              )}
+              <button type="button" disabled={Boolean(busy)} onClick={() => act(`rm-${s.server_id}`, () => api("DELETE", `/api/agents/${AGENT_ID}/mcps/${s.server_id}`))}>
+                Detach
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+      {!servers.length && <p className="muted">No MCP servers yet.</p>}
+      {available.length > 0 && (
+        <div className="row-actions">
+          <select value={add} onChange={(e) => setAdd(e.target.value)}>
+            <option value="">Add a server…</option>
+            {available.map((s) => (
+              <option key={s.id} value={s.id} disabled={s.missing_secrets.length > 0}>
+                {s.name}
+                {s.auth === "oauth" ? " (sign in)" : ""}
+                {s.missing_secrets.length ? ` (needs ${s.missing_secrets.join(", ")})` : ""}
+              </option>
+            ))}
+          </select>
+          <button type="button" disabled={!add || Boolean(busy)} onClick={() => act("add", () => api("POST", `/api/agents/${AGENT_ID}/mcps`, { server: add }).then((r) => (setAdd(""), r)))}>
+            {busy === "add" ? "…" : "Add"}
+          </button>
+        </div>
+      )}
       {error && <p className="error">{error}</p>}
     </div>
   );
@@ -431,7 +557,7 @@ type TaskSummary = {
   criteria_total: number;
   criteria_checked: number;
 };
-type Panel = "tasks" | "config" | "container" | "skills" | null;
+type Panel = "tasks" | "config" | "container" | "skills" | "mcps" | null;
 
 async function api<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -753,6 +879,19 @@ function Chat({ agents }: { agents: AgentInfo[] }) {
     history.replaceState(null, "", url);
   }, [panel]);
 
+  // MCPs: count and "needs attention" for the header chip (task 018).
+  const [mcpCount, setMcpCount] = useState(0);
+  const [mcpAttention, setMcpAttention] = useState(false);
+  const onMcpCount = useCallback((n: number, attention: boolean) => {
+    setMcpCount(n);
+    setMcpAttention(attention);
+  }, []);
+  useEffect(() => {
+    api<{ servers: AgentMcp[] }>("GET", `/api/agents/${AGENT_ID}/mcps`)
+      .then((d) => onMcpCount(d.servers.length, d.servers.some((s) => s.status !== "ready")))
+      .catch(() => {});
+  }, [onMcpCount]);
+
   // Skills: count for the header button, and skills activated in this chat (from tool rows).
   const [skillCount, setSkillCount] = useState<number | null>(null);
   useEffect(() => {
@@ -800,6 +939,14 @@ function Chat({ agents }: { agents: AgentInfo[] }) {
             </button>
             <button type="button" className={panel === "skills" ? "active" : ""} onClick={() => toggle("skills")}>
               Skills {skillCount !== null && <span className="badge">{skillCount}</span>}
+            </button>
+            <button
+              type="button"
+              className={`chip${panel === "mcps" ? " active" : ""}`}
+              onClick={() => toggle("mcps")}
+              title={mcpAttention ? "A server needs attention" : "MCP servers"}
+            >
+              {mcpCount > 0 && <span className={`cdot${mcpAttention ? " warn" : " on"}`} />} MCPs {mcpCount > 0 && <span className="badge">{mcpCount}</span>}
             </button>
             {hasContainer && (
               <button
@@ -885,7 +1032,7 @@ function Chat({ agents }: { agents: AgentInfo[] }) {
       {panel && (
         <aside className="side">
           <div className="side-head">
-            <h2>{panel === "tasks" ? `Tasks (${tasks.length})` : panel === "container" ? "Container" : panel === "skills" ? "Skills" : "Config"}</h2>
+            <h2>{panel === "tasks" ? `Tasks (${tasks.length})` : panel === "container" ? "Container" : panel === "skills" ? "Skills" : panel === "mcps" ? "MCPs" : "Config"}</h2>
             <button type="button" className="close" aria-label="Close panel" onClick={() => setPanel(null)}>
               ×
             </button>
@@ -896,6 +1043,8 @@ function Chat({ agents }: { agents: AgentInfo[] }) {
             <ContainerPanel status={container} onRefresh={loadContainer} />
           ) : panel === "skills" ? (
             <SkillsPanel used={usedSkills} onCount={setSkillCount} />
+          ) : panel === "mcps" ? (
+            <McpsPanel onCount={onMcpCount} />
           ) : (
             <ConfigPanel config={config} models={models} onChange={updateConfig} error={configError} />
           )}

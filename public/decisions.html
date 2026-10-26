@@ -200,7 +200,7 @@
       el("content").innerHTML = `<table><thead><tr><th>Quadrant</th><th>Decision</th><th>Agent</th><th>Task</th><th>Evidence</th><th>Risk</th><th>Clef</th><th>${status === "pending" ? "" : "Decided"}</th></tr></thead><tbody>${
         rows.map((d) => `<tr data-id="${esc(d.identifier)}" class="${d.identifier === selected ? "selected" : ""}">
           <td>${d.quadrant ? `<span class="q q-${d.quadrant}">${QUADRANT[d.quadrant]}</span>` : `<span class="meta">${d.eval_error ? "Clef error" : "not evaluated"}</span>`}</td>
-          <td><span class="id">${esc(d.identifier)}</span> ${esc(d.title)} ${status === "all" ? `<span class="pill s-${d.status}">${d.status}</span>` : ""}
+          <td><span class="id">${esc(d.identifier)}</span> ${esc(d.title)} ${d.kind === "mcp_call" ? `<span class="pill">MCP call</span>` : ""} ${status === "all" ? `<span class="pill s-${d.status}">${d.status}</span>` : ""}
             ${unsureNote(d) ? `<div class="meta">${esc(unsureNote(d))}</div>` : ""}</td>
           <td>${esc(d.requested_by)}</td>
           <td>${d.task_identifier ? `<span class="id">${esc(d.task_identifier)}</span>` : "—"}</td>

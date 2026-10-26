@@ -48,7 +48,11 @@
     "esbuild": "0.28.2"
   },
   "cloudflare": {
-    "bindings": {}
+    "bindings": {
+      "FLARETOWN_SECRETS_KEY": {
+        "description": "Encrypts the secrets you add for MCP servers. Generate it with `openssl rand -base64 32` and keep a copy: if you lose it, those secrets can't be recovered. You can leave it empty and set it later; only MCP secrets need it."
+      }
+    }
   },
   "packageManager": "pnpm@12.15.0"
 }
