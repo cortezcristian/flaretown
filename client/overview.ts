@@ -262,6 +262,7 @@ async function main() {
     if (e.key === "Escape" && !$("panel").hidden) setPanelOpen(false);
   });
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => renderChart());
+  window.addEventListener("ft-theme", () => renderChart()); // theme picked in Cmd+K
 
   try {
     const { models } = await (await fetch("/api/models")).json();

@@ -5,8 +5,11 @@
       --border: #e4e4e7; --accent: #f6821f; --ok: #16a34a; --bad: #dc2626;
     }
     @media (prefers-color-scheme: dark) {
-      :root { --bg: #0f0f12; --fg: #f4f4f5; --muted: #a1a1aa; --card: #18181d; --border: #2a2a31; --ok: #4ade80; --bad: #f87171; }
+      :root:not([data-theme="light"]) { --bg: #0f0f12; --fg: #f4f4f5; --muted: #a1a1aa; --card: #18181d; --border: #2a2a31; --ok: #4ade80; --bad: #f87171; }
     }
+    /* Theme picked in Cmd+K (theme.js) */
+    :root[data-theme="dark"] { color-scheme: dark; --bg: #0f0f12; --fg: #f4f4f5; --muted: #a1a1aa; --card: #18181d; --border: #2a2a31; --ok: #4ade80; --bad: #f87171; }
+    :root[data-theme="light"] { color-scheme: light; }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
     a { color: var(--accent); text-decoration: none; }

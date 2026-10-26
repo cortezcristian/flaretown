@@ -26,6 +26,16 @@ const MENUS: Array<[string, string]> = [
 
 const RECENT_KEY = "flaretown.palette.recent";
 
+// Theme (public/theme.js sets window.flaretownTheme before the page paints).
+type ThemeMode = "system" | "light" | "dark";
+type ThemeApi = { get(): ThemeMode; set(mode: ThemeMode): void };
+const themeApi = (): ThemeApi | undefined => (window as unknown as { flaretownTheme?: ThemeApi }).flaretownTheme;
+const THEMES: Array<[ThemeMode, string]> = [
+  ["system", "System"],
+  ["light", "Light"],
+  ["dark", "Dark"],
+];
+
 function readRecent(): string[] {
   try {
     return JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]") as string[];
@@ -98,6 +108,7 @@ function Palette() {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [theme, setTheme] = useState<ThemeMode>(() => themeApi()?.get() ?? "system");
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -113,6 +124,7 @@ function Palette() {
   useEffect(() => {
     if (!open) return;
     setSearch("");
+    setTheme(themeApi()?.get() ?? "system");
     fetch("/api/agents")
       .then((r) => r.json())
       .then((d: { agents?: Agent[] }) => setAgents(d.agents ?? []))
@@ -187,6 +199,25 @@ function Palette() {
               ))}
           </Command.Group>
         ))}
+
+        {!agentsOnly && !mention?.draft && (
+          <Command.Group heading="Theme">
+            {THEMES.map(([mode, label]) => (
+              <Command.Item
+                key={`theme:${mode}`}
+                value={`theme:${mode} ${label} theme`}
+                keywords={["theme", "appearance", "mode", "color", label]}
+                onSelect={() => {
+                  themeApi()?.set(mode);
+                  setTheme(mode);
+                }}
+              >
+                <span>Theme: {label}</span>
+                <span className="ft-hint">{theme === mode ? "✓ current" : mode === "system" ? "Follow the OS" : ""}</span>
+              </Command.Item>
+            ))}
+          </Command.Group>
+        )}
       </Command.List>
       <div className="ft-footer">↑↓ to move · Enter to open · Esc to close · @ for agents</div>
     </Command.Dialog>
