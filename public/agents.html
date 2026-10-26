@@ -22,6 +22,12 @@
           <h1>Agents</h1>
           <div class="actions"><button class="primary" id="new-agent">+ New agent</button></div>
         </header>
+        <div class="tabs" id="tier-tabs">
+          <button data-tier="all">All<span class="count" id="c-all"></span></button>
+          <button data-tier="lead">Leads<span class="count" id="c-lead"></span></button>
+          <button data-tier="operator">Operators<span class="count" id="c-operator"></span></button>
+          <input type="search" class="filter" id="q" placeholder="Filter agents…" aria-label="Filter agents">
+        </div>
         <div id="list"></div>
       </div>
     </main>
@@ -78,10 +84,37 @@
       return [...principal, ...leads.flatMap((l) => [l, ...agents.filter((a) => a.tier === "operator" && a.parent_id === l.id)])];
     }
 
+    // Tier chips and text filter (same pattern as Skills and MCPs).
+    let tierFilter = ["lead", "operator"].includes(new URLSearchParams(location.search).get("tier")) ? new URLSearchParams(location.search).get("tier") : "all";
+    let query = "";
+    function visibleAgents() {
+      return ordered().filter((a) =>
+        (tierFilter === "all" || a.tier === tierFilter) &&
+        (!query || [a.name, a.id, a.area, a.tier, modelName(a.model), a.parent_id ? nameOf(a.parent_id) : "human"]
+          .some((f) => String(f ?? "").toLowerCase().includes(query))));
+    }
+    document.querySelectorAll("#tier-tabs [data-tier]").forEach((b) => b.addEventListener("click", () => {
+      tierFilter = b.dataset.tier;
+      const u = new URL(location.href);
+      tierFilter === "all" ? u.searchParams.delete("tier") : u.searchParams.set("tier", tierFilter);
+      history.replaceState(null, "", u);
+      render();
+    }));
+    el("q").addEventListener("input", () => { query = el("q").value.trim().toLowerCase(); render(); });
+
     function render() {
+      document.querySelectorAll("#tier-tabs [data-tier]").forEach((b) => b.classList.toggle("active", b.dataset.tier === tierFilter));
+      el("c-all").textContent = agents.length;
+      el("c-lead").textContent = agents.filter((a) => a.tier === "lead").length;
+      el("c-operator").textContent = agents.filter((a) => a.tier === "operator").length;
+      const shown = visibleAgents();
+      if (!shown.length) {
+        el("list").innerHTML = `<div class="empty">${query ? `No agents match “${esc(query)}”.` : tierFilter === "lead" ? "No Leads yet." : "No Operators yet."}</div>`;
+        return;
+      }
       el("list").innerHTML = `<table><thead><tr><th>Name</th><th>Type</th><th>Reports to</th><th>Model</th><th>Code Mode</th><th>Sandbox</th><th>Open tasks</th></tr></thead><tbody>${
-        ordered().map((a) => `<tr data-id="${esc(a.id)}" class="${a.id === selectedId ? "selected" : ""}">
-          <td class="${a.tier === "operator" ? "indent" : ""}"><strong>${esc(a.name)}</strong> <span class="id">${esc(a.id)}</span></td>
+        shown.map((a) => `<tr data-id="${esc(a.id)}" class="${a.id === selectedId ? "selected" : ""}">
+          <td class="${a.tier === "operator" && tierFilter === "all" && !query ? "indent" : ""}"><strong>${esc(a.name)}</strong> <span class="id">${esc(a.id)}</span></td>
           <td><span class="tier ${a.tier}">${esc(a.tier)}</span></td>
           <td>${a.parent_id ? esc(nameOf(a.parent_id)) : "Human"}</td>
           <td class="meta">${esc(modelName(a.model))}</td>
