@@ -15,7 +15,7 @@ type Agent = {
   open_tasks: number;
 };
 type Overview = {
-  counts: { agents: number; working: number; projects: number; open_tasks: number; review: number };
+  counts: { agents: number; working: number; projects: number; projects_open: number; open_tasks: number; review: number };
   agents: Agent[];
 };
 type Event = { at: string; kind: string; identifier: string; title: string; actor: string | null; detail: string | null };
@@ -109,6 +109,7 @@ function renderCounters() {
   $("c-agents").textContent = String(c.agents);
   $("c-working").textContent = c.working ? `${c.working} working` : "all idle";
   $("c-projects").textContent = String(c.projects);
+  $("c-projects-sub").textContent = c.projects_open ? `${c.projects_open} with open work` : "no open work";
   $("c-open").textContent = String(c.open_tasks);
   $("c-review").textContent = String(c.review);
 }

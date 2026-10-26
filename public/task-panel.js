@@ -36,6 +36,9 @@
         (await fetch("/api/agents")).json(),
       ]);
       const leads = agents.filter((a) => a.tier === "lead");
+      // Archived projects can't get tasks. Preselect the page's project filter when there is one.
+      const preset = opts.project?.() || "default";
+      const active = projects.filter((p) => p.status !== "archived");
       const assigneeOptions = [
         `<option value="principal">Principal</option>`,
         ...leads.map((l) => `<optgroup label="${esc(l.name)} (Lead)">
@@ -54,7 +57,7 @@ Acceptance criteria:
           <div class="meta">First line is the title. Lines starting with <code>- [ ]</code> become acceptance criteria.</div>
 
           <label for="f-project">Project</label>
-          <select id="f-project">${projects.map((p) => `<option value="${esc(p.id)}" ${p.id === "default" ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
+          <select id="f-project">${active.map((p) => `<option value="${esc(p.id)}" ${p.id === preset ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
 
           <label for="f-assignee">Assign to</label>
           <select id="f-assignee">${assigneeOptions}</select>
@@ -119,11 +122,17 @@ Acceptance criteria:
     // ---- task details (SPEC-sections-view 1.3) ------------------------------------------
     async function openDetails(id) {
       opts.onSelect(id);
-      const t = await (await fetch(`/api/tasks/${encodeURIComponent(id)}`)).json();
+      const [t, { projects }] = await Promise.all([
+        (await fetch(`/api/tasks/${encodeURIComponent(id)}`)).json(),
+        (await fetch("/api/projects")).json().catch(() => ({ projects: [] })),
+      ]);
       const open = ["todo", "in_progress", "review"].includes(t.state);
+      const project = projects.find((p) => p.id === t.project_id);
+      // Only open top-level tasks move; their subtasks go with them.
+      const canMove = open && !t.parent_id;
       showPanel(`${t.identifier}`, `
         <div><strong>${esc(t.title)}</strong></div>
-        <div class="meta">${esc(t.state.replace("_", " "))} · ${esc(t.assignee || "unassigned")} · project ${esc(t.project_id)}${t.requires_approval ? ` · <span class="state">requires approval</span>` : ""}</div>
+        <div class="meta">${esc(t.state.replace("_", " "))} · ${esc(t.assignee || "unassigned")} · project <a href="/projects.html?project=${encodeURIComponent(t.project_id)}">${esc(project?.name ?? t.project_id)}</a>${t.requires_approval ? ` · <span class="state">requires approval</span>` : ""}</div>
         <p style="white-space: pre-wrap">${esc(t.description)}</p>
 
         <label>Acceptance criteria</label>
@@ -140,6 +149,10 @@ Acceptance criteria:
           <button class="ghost danger" id="d-cancel">Cancel task</button>
         </div>` : ""}
         <div class="error" id="d-error"></div>
+
+        ${canMove ? `<label for="d-project">Project</label>
+          <select id="d-project">${projects.filter((p) => p.status !== "archived" || p.id === t.project_id).map((p) => `<option value="${esc(p.id)}" ${p.id === t.project_id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
+          ${t.subtasks?.length ? `<div class="meta">Its ${t.subtasks.length} subtask(s) move with it.</div>` : ""}` : ""}
 
         ${t.subtasks?.length ? `<label>Subtasks (${t.subtasks.filter((x) => x.state === "done").length}/${t.subtasks.length} done)</label>
           ${t.subtasks.map((x) => `<div class="comment"><a href="#" data-open="${esc(x.id)}"><span class="id">${esc(x.identifier)}</span> ${esc(x.title)}</a>
@@ -168,6 +181,7 @@ Acceptance criteria:
       );
       document.querySelectorAll("[data-open]").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); openDetails(a.dataset.open); }));
       el("d-run")?.addEventListener("click", () => act(() => apiCall("POST", `/api/tasks/${id}/run`)));
+      el("d-project")?.addEventListener("change", (e) => act(() => apiCall("PATCH", `/api/tasks/${id}`, { project_id: e.target.value })));
 
       // Decisions linked to the task (task 015).
       fetch(`/api/decisions?status=all&task=${encodeURIComponent(t.identifier)}`).then((r) => r.json()).then(({ decisions }) => {

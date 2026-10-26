@@ -28,11 +28,12 @@ async function overview(env: Env) {
     db
       .prepare(
         `SELECT
-           (SELECT COUNT(*) FROM projects) AS projects,
+           (SELECT COUNT(*) FROM projects WHERE status = 'active') AS projects,
+           (SELECT COUNT(DISTINCT project_id) FROM tasks WHERE state IN ('todo', 'in_progress', 'review')) AS projects_open,
            (SELECT COUNT(*) FROM tasks WHERE state IN ('todo', 'in_progress', 'review')) AS open_tasks,
            (SELECT COUNT(*) FROM tasks WHERE state = 'review') AS review`,
       )
-      .first<{ projects: number; open_tasks: number; review: number }>(),
+      .first<{ projects: number; projects_open: number; open_tasks: number; review: number }>(),
   ]);
 
   const current = new Map<string, { identifier: string; title: string }>();
@@ -55,6 +56,7 @@ async function overview(env: Env) {
       agents: list.length,
       working: list.filter((a) => a.status === "working").length,
       projects: counts?.projects ?? 0,
+      projects_open: counts?.projects_open ?? 0,
       open_tasks: counts?.open_tasks ?? 0,
       review: counts?.review ?? 0,
     },

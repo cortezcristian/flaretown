@@ -20,6 +20,7 @@ import { getTimezone } from "../services/settings";
 import { addEvidence, createDecision, getDecision, listDecisions, withdrawDecision } from "../services/decisions";
 import { listSkills, setAgentSkills } from "../services/skills";
 import { attachServer, detachServer, listForAgents } from "../services/mcps";
+import { createProject, getProject, listProjects, setProjectStatus, updateProject } from "../services/projects";
 import {
   cancelTask,
   checkCriterion,
@@ -59,7 +60,7 @@ export const allTools: ToolDef[] = [
       assignee: z.string().optional().describe("Agent id, e.g. lead-1"),
       priority: z.number().int().min(1).max(4).optional().describe("1 = highest"),
       parent_id: z.string().optional().describe("Parent task id or identifier, for subtasks"),
-      project_id: z.string().optional().describe("Project id. Defaults to 'default'"),
+      project_id: z.string().optional().describe("Project id (projects_list). Subtasks default to the parent's project, other tasks to 'default'"),
       requires_approval: z.boolean().optional().describe("The task can't go to review or close without an approved Decision"),
     }),
     run: async (env, caller, args) => {
@@ -96,6 +97,7 @@ export const allTools: ToolDef[] = [
       assignee: z.string().optional().describe("Agent id. Principal only"),
       priority: z.number().int().min(1).max(4).optional().describe("Principal only"),
       requires_approval: z.boolean().optional().describe("Principal only. Needs an approved Decision to go to review or close"),
+      project_id: z.string().optional().describe("Principal only. Move the task (and its subtasks) to this project"),
     }),
     run: async (env, caller, { task, ...rest }) => {
       const updated = await updateTask(env.DB_CORE, caller, task, rest);
@@ -467,8 +469,41 @@ export const allTools: ToolDef[] = [
 ];
 
 // Which tools each tier gets (SPEC-agents section 3, task authority).
-// ---- MCP servers (task 018) ----
+// ---- MCP servers (task 018) and projects (task 019) ----
 allTools.push(
+  defineTool({
+    name: "projects_list",
+    description: "List projects with their open, in-review and recent done task counts, owner Lead and status. Use the id as project_id for tasks.",
+    input: z.object({ status: z.enum(["active", "archived", "all"]).optional().describe("Default active") }),
+    run: (env, _caller, args) => listProjects(env.DB_CORE, { status: args.status ?? "active" }),
+  }),
+  defineTool({
+    name: "projects_create",
+    description:
+      "Create a project when a new stream of work starts (a product, client or initiative), then put its tasks in it. Principal only. owner_id: optional Lead that owns it.",
+    input: z.object({
+      name: z.string(),
+      description: z.string().optional().describe("What the project is about, one paragraph"),
+      owner_id: z.string().optional().describe("Lead id"),
+    }),
+    run: (env, caller, args) => createProject(env.DB_CORE, caller, args),
+  }),
+  defineTool({
+    name: "projects_update",
+    description: "Rename a project, change its description or owner Lead, or archive / unarchive it. Principal only. Default can't be archived.",
+    input: z.object({
+      project: z.string().describe("Project id"),
+      name: z.string().optional(),
+      description: z.string().optional(),
+      owner_id: z.string().nullable().optional().describe("Lead id, or null for none"),
+      status: z.enum(["active", "archived"]).optional(),
+    }),
+    run: async (env, caller, { project, status, ...rest }) => {
+      if (Object.values(rest).some((v) => v !== undefined)) await updateProject(env.DB_CORE, caller, project, rest);
+      if (status) return setProjectStatus(env.DB_CORE, caller, project, status);
+      return getProject(env.DB_CORE, project);
+    },
+  }),
   defineTool({
     name: "mcps_list",
     description:
@@ -497,13 +532,13 @@ const TIER_TOOLS: Record<string, string[]> = {
     "tasks_list", "tasks_get", "tasks_update", "tasks_comment", "tasks_create_subtask",
     "tasks_check_criterion", "tasks_close", "tasks_send_back", "tasks_cancel",
     "agents_list", "agents_create", "agents_retire", "agents_set_skills", "skills_list",
-    "mcps_list", "mcps_attach", "mcps_detach",
+    "mcps_list", "mcps_attach", "mcps_detach", "projects_list",
     "routines_list", "routines_create", "routines_update", "routines_delete", "routines_run",
     "reports_save", "reports_list", "reports_read", "artifacts_write", "artifacts_read", "artifacts_list", "time_now",
     "decisions_request", "decisions_add_evidence", "decisions_get", "decisions_list", "decisions_withdraw",
   ],
   operator: [
-    "tasks_get", "tasks_update", "tasks_comment", "mcps_list",
+    "tasks_get", "tasks_update", "tasks_comment", "mcps_list", "projects_list",
     "routines_list", "routines_create", "routines_update", "routines_delete", "routines_run",
     "reports_save", "reports_list", "reports_read", "artifacts_write", "artifacts_read", "artifacts_list", "time_now",
     "decisions_request", "decisions_add_evidence", "decisions_get", "decisions_list", "decisions_withdraw",

@@ -211,6 +211,8 @@ export async function retireAgent(db: D1Database, caller: Caller, id: string): P
     db.prepare("DELETE FROM agent_skills WHERE agent_id = ?").bind(agent.id),
     // Its MCP attachments go too (the retired DO is never woken again).
     db.prepare("DELETE FROM agent_mcps WHERE agent_id = ?").bind(agent.id),
+    // Projects it owned have no owner now.
+    db.prepare("UPDATE projects SET owner_id = NULL WHERE owner_id = ?").bind(agent.id),
     // Retiring an agent disables its routines (SPEC-agents 7.2).
     db.prepare("UPDATE routines SET enabled = 0, next_run_at = NULL, updated_at = ? WHERE owner_id = ?").bind(ts, agent.id),
     // Running work goes back to the queue under the parent; review stays in review.

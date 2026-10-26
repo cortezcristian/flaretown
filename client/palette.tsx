@@ -7,7 +7,8 @@ import { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 type Agent = { id: string; name: string; tier: "principal" | "lead" | "operator"; parent_id: string | null; area: string };
-type Entry = { id: string; label: string; hint: string; href: string; group: "Menus" | "Agents" | "Agent panels" | "Recent"; keywords: string[] };
+type Project = { id: string; name: string; status: string; open: number };
+type Entry = { id: string; label: string; hint: string; href: string; group: "Menus" | "Agents" | "Projects" | "Agent panels" | "Recent"; keywords: string[] };
 
 const MENUS: Array<[string, string]> = [
   ["Overview", "/"],
@@ -22,6 +23,7 @@ const MENUS: Array<[string, string]> = [
   ["MCPs", "/mcps.html"],
   ["Agents", "/agents.html"],
   ["Orchestrator", "/orchestrator.html"],
+  ["Projects", "/projects.html"],
 ];
 
 const RECENT_KEY = "flaretown.palette.recent";
@@ -55,7 +57,7 @@ function pushRecent(id: string) {
 
 const chatHref = (agentId: string, extra = "") => `/chat.html?agent=${encodeURIComponent(agentId)}${extra}`;
 
-function buildEntries(agents: Agent[]): Entry[] {
+function buildEntries(agents: Agent[], projects: Project[]): Entry[] {
   const name = (id: string | null) => agents.find((a) => a.id === id)?.name ?? "";
   const entries: Entry[] = MENUS.map(([label, href]) => ({
     id: `menu:${href}`,
@@ -65,6 +67,16 @@ function buildEntries(agents: Agent[]): Entry[] {
     group: "Menus",
     keywords: [label],
   }));
+  for (const p of projects.filter((x) => x.status !== "archived")) {
+    entries.push({
+      id: `project:${p.id}`,
+      label: p.name,
+      hint: `Project · ${p.open} open`,
+      href: `/projects.html?project=${encodeURIComponent(p.id)}`,
+      group: "Projects",
+      keywords: [p.name, p.id, "project"],
+    });
+  }
   for (const a of agents) {
     const hint = a.tier === "principal" ? "Principal" : a.tier === "lead" ? "Lead" : `Operator · ${name(a.parent_id)}`;
     entries.push({
@@ -108,6 +120,7 @@ function Palette() {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [theme, setTheme] = useState<ThemeMode>(() => themeApi()?.get() ?? "system");
 
   useEffect(() => {
@@ -129,9 +142,13 @@ function Palette() {
       .then((r) => r.json())
       .then((d: { agents?: Agent[] }) => setAgents(d.agents ?? []))
       .catch(() => {});
+    fetch("/api/projects?status=active")
+      .then((r) => r.json())
+      .then((d: { projects?: Project[] }) => setProjects(d.projects ?? []))
+      .catch(() => {});
   }, [open]);
 
-  const entries = useMemo(() => buildEntries(agents), [agents]);
+  const entries = useMemo(() => buildEntries(agents, projects), [agents, projects]);
   const agentsOnly = search.trimStart().startsWith("@");
   const mention = useMemo(() => parseMention(search, agents), [search, agents]);
   const recent = useMemo(
@@ -146,7 +163,7 @@ function Palette() {
   };
 
   const visible = agentsOnly ? entries.filter((e) => e.group === "Agents") : entries;
-  const groups = (["Menus", "Agents", "Agent panels"] as const).filter((g) => visible.some((e) => e.group === g));
+  const groups = (["Menus", "Agents", "Projects", "Agent panels"] as const).filter((g) => visible.some((e) => e.group === g));
 
   return (
     <Command.Dialog open={open} onOpenChange={setOpen} label="Jump to">

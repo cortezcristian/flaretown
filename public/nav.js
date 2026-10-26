@@ -14,6 +14,7 @@
     { href: "/mcps.html", label: "MCPs", icon: "M9 2v5M15 2v5M6 7h12v4a6 6 0 0 1-12 0zM12 17v5" },
     { href: "/agents.html", label: "Agents", icon: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21c0-4 4-6 8-6s8 2 8 6" },
     { href: "/orchestrator.html", label: "Orchestrator", icon: "M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" },
+    { href: "/projects.html", label: "Projects", icon: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" },
   ];
 
   const style = document.createElement("style");
