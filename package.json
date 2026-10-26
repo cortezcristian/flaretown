@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy && wrangler d1 migrations apply DB_CORE --remote && wrangler d1 migrations apply DB_RUNS --remote",
+    "deploy:no-containers": "wrangler deploy --containers-rollout=none && wrangler d1 migrations apply DB_CORE --remote && wrangler d1 migrations apply DB_RUNS --remote",
     "types": "wrangler types",
     "typecheck": "wrangler types && tsc --noEmit && tsc --noEmit -p client",
     "db:migrate:local": "wrangler d1 migrations apply DB_CORE --local && wrangler d1 migrations apply DB_RUNS --local",

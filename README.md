@@ -74,6 +74,8 @@ pnpm run deploy        # deploys and applies the D1 migrations
 
 Needs Node.js 22.18+, pnpm, and Docker running (the desktop container image is built at deploy). Protect the Worker with Access first (step 1).
 
+No Docker, or only Worker code changed? `pnpm run deploy:no-containers` deploys the Worker and leaves container images and running containers as they are.
+
 ## Remove everything
 
 ```bash
