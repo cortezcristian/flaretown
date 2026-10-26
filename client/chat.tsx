@@ -91,6 +91,9 @@ function toolSummary(part: ToolPart): string {
     case "tasks_send_back": return `Sent back ${out.identifier ?? "task"}`;
     case "tasks_cancel": return `Cancelled ${out.identifier ?? "task"}`;
     case "exec": return "Ran code";
+    case "decisions_request": return `Requested decision ${(part.output as { identifier?: string } | undefined)?.identifier ?? ""}`;
+    case "decisions_add_evidence": return `Added evidence to ${(part.output as { identifier?: string } | undefined)?.identifier ?? "a decision"}`;
+    case "decisions_withdraw": return "Withdrew a decision";
     case "sandbox_run": return "Ran command in sandbox";
     case "sandbox_status": return "Checked sandbox";
     case "sandbox_reset": return "Reset sandbox";

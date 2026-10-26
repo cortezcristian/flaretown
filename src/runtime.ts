@@ -3,11 +3,13 @@
 
 import { waitUntil } from "cloudflare:workers";
 import { getAgentByName } from "agents";
+import { evaluateDecision } from "./services/decisions";
 
 export const PRINCIPAL_INSTANCE = "default";
 
 // The methods every agent class exposes over RPC.
 export interface AgentRpc {
+  say(text: string): Promise<void>;
   runTask(identifier: string): Promise<void>;
   notifyReview(identifier: string, by: string): Promise<void>;
   notifySubtasksDone(parentIdentifier: string): Promise<void>;
@@ -106,3 +108,49 @@ export function afterSubtaskFinished(env: Env, task: { parent_id: string | null 
     "notify subtasks done failed",
   );
 }
+
+// ---- Decisions (task 015) -------------------------------------------------------------------
+
+type DecidedDecision = {
+  identifier: string;
+  title: string;
+  description: string;
+  requested_by: string;
+  status: string;
+  decided_by: string | null;
+  decision_comment: string | null;
+  task_identifier: string | null;
+};
+
+// Tell the requesting agent how its Decision ended, in its chat, so it can act on it.
+export function notifyDecision(env: Env, decision: DecidedDecision) {
+  if (decision.requested_by === "human" || decision.requested_by === "orchestrator") return;
+  const who = decision.decided_by === "human" ? "the human" : decision.decided_by ?? "someone";
+  const verdict = decision.status === "approved" ? "APPROVED" : decision.status === "rejected" ? "REJECTED" : decision.status.toUpperCase();
+  const next =
+    decision.status === "approved"
+      ? "Go ahead with it as proposed (the How below)."
+      : decision.status === "rejected"
+        ? "Don't do it. Adjust the plan, or stop and explain on the task."
+        : "It's back to pending: wait for a new outcome before acting.";
+  const text =
+    `Decision ${decision.identifier} "${decision.title}" was ${verdict} by ${who}.` +
+    `${decision.decision_comment ? `\nComment: ${decision.decision_comment}` : ""}` +
+    `${decision.task_identifier ? `\nTask: ${decision.task_identifier}` : ""}\n${next}\n\n${decision.description}`;
+  background(
+    agentStub(env, decision.requested_by).then((a) => a.say(text)),
+    `notify ${decision.requested_by} of ${decision.identifier} failed`,
+  );
+}
+
+// Run Clef on a Decision in the background; in System One it may decide, then tell the agent.
+export function evaluateDecisionInBackground(env: Env, ref: string) {
+  background(
+    (async () => {
+      const result = await evaluateDecision(env, ref);
+      if (result.autoDecided) notifyDecision(env, result.decision);
+    })(),
+    `evaluate decision ${ref} failed`,
+  );
+}
+

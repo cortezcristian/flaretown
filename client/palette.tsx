@@ -14,6 +14,7 @@ const MENUS: Array<[string, string]> = [
   ["Chat", "/chat.html"],
   ["Tasks", "/tasks.html"],
   ["Kanban", "/kanban.html"],
+  ["Decisions", "/decisions.html"],
   ["Routines", "/routines.html"],
   ["Artifacts", "/artifacts.html"],
   ["Containers", "/containers.html"],

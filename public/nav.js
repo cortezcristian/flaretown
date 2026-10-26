@@ -6,6 +6,7 @@
     { href: "/chat.html", label: "Chat", icon: "M4 5h16v11H8l-4 4z" },
     { href: "/tasks.html", label: "Tasks", icon: "M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2", badge: "tasks" },
     { href: "/kanban.html", label: "Kanban", icon: "M4 4h4v16H4zM10 4h4v10h-4zM16 4h4v6h-4z" },
+    { href: "/decisions.html", label: "Decisions", icon: "M12 3v18M5 7h14M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0z", badge: "decisions" },
     { href: "/routines.html", label: "Routines", icon: "M12 7v5l3 2M21 12a9 9 0 1 1-3-6.7M21 4v4h-4" },
     { href: "/artifacts.html", label: "Artifacts", icon: "M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9" },
     { href: "/containers.html", label: "Containers", icon: "M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10" },
@@ -204,6 +205,16 @@
         if (el) el.textContent = d.counts?.open ? String(d.counts.open) : "";
       })
       .catch(() => {});
+  // Badge: pending Decisions.
+  const refreshDecisions = () =>
+    fetch("/api/decisions?status=pending")
+      .then((r) => r.json())
+      .then((d) => {
+        const el = nav.querySelector('[data-badge="decisions"]');
+        if (el) el.textContent = d.counts?.pending ? String(d.counts.pending) : "";
+      })
+      .catch(() => {});
   refresh();
-  setInterval(refresh, 15000);
+  refreshDecisions();
+  setInterval(() => { refresh(); refreshDecisions(); }, 15000);
 })();

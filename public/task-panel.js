@@ -66,6 +66,9 @@ Acceptance criteria:
           </div>
           <div class="meta" id="f-mode-hint">Waits in the queue for the Orchestrator.</div>
 
+          <label style="display:flex;align-items:center;gap:8px;color:var(--fg)"><input type="checkbox" id="f-approval" style="width:auto"> Requires approval</label>
+          <div class="meta">The agent can't move it to review until a Decision on it is approved.</div>
+
           <div class="error" id="f-error"></div>
           <div class="form-actions">
             <button type="submit" class="primary" id="f-submit">Create task</button>
@@ -100,6 +103,7 @@ Acceptance criteria:
             criteria,
             project_id: el("f-project").value,
             assignee: el("f-assignee").value,
+            requires_approval: el("f-approval").checked,
           });
           if (mode === "run") await apiCall("POST", `/api/tasks/${task.id}/run`);
           await opts.onChange();
@@ -119,7 +123,7 @@ Acceptance criteria:
       const open = ["todo", "in_progress", "review"].includes(t.state);
       showPanel(`${t.identifier}`, `
         <div><strong>${esc(t.title)}</strong></div>
-        <div class="meta">${esc(t.state.replace("_", " "))} · ${esc(t.assignee || "unassigned")} · project ${esc(t.project_id)}</div>
+        <div class="meta">${esc(t.state.replace("_", " "))} · ${esc(t.assignee || "unassigned")} · project ${esc(t.project_id)}${t.requires_approval ? ` · <span class="state">requires approval</span>` : ""}</div>
         <p style="white-space: pre-wrap">${esc(t.description)}</p>
 
         <label>Acceptance criteria</label>
@@ -145,6 +149,9 @@ Acceptance criteria:
         <label>Reports</label>
         <div id="d-reports"><div class="meta">Loading…</div></div>
 
+        <label>Decisions</label>
+        <div id="d-decisions"><div class="meta">Loading…</div></div>
+
         <label>Comments</label>
         ${t.comments.map((c) => `<div class="comment"><div class="meta">${esc(c.author)} · ${new Date(c.created_at).toLocaleString()}</div>${esc(c.body)}</div>`).join("") || `<div class="meta">None</div>`}
         <form id="d-comment-form" style="margin-top:8px">
@@ -161,6 +168,16 @@ Acceptance criteria:
       );
       document.querySelectorAll("[data-open]").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); openDetails(a.dataset.open); }));
       el("d-run")?.addEventListener("click", () => act(() => apiCall("POST", `/api/tasks/${id}/run`)));
+
+      // Decisions linked to the task (task 015).
+      fetch(`/api/decisions?status=all&task=${encodeURIComponent(t.identifier)}`).then((r) => r.json()).then(({ decisions }) => {
+        const box = el("d-decisions");
+        if (!box) return;
+        box.innerHTML = decisions?.length
+          ? decisions.map((d) => `<div class="comment"><a href="/decisions.html?status=all&decision=${encodeURIComponent(d.identifier)}"><span class="id">${esc(d.identifier)}</span> ${esc(d.title)}</a>
+              <div class="meta">${esc(d.status)}${d.decided_by ? ` by ${esc(d.decided_by)}` : ""} · ${esc(d.requested_by)}</div></div>`).join("")
+          : `<div class="meta">None${t.requires_approval ? ": an approved Decision is needed before review" : ""}</div>`;
+      }).catch(() => {});
 
       // Reports saved on the task (R2). Click to read.
       fetch(`/api/tasks/${encodeURIComponent(id)}/reports`).then((r) => r.json()).then(({ reports }) => {

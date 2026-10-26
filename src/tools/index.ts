@@ -2,13 +2,22 @@
 // agents' Think tools. Each calls the same service function as its REST endpoint (SPEC-api 2.2).
 
 import { z } from "zod";
-import { afterSubtaskFinished, notifyReviewer, pokeOrchestrator, rescheduleRoutines, schedulerStub, startAgentOnTask } from "../runtime";
+import {
+  afterSubtaskFinished,
+  evaluateDecisionInBackground,
+  notifyReviewer,
+  pokeOrchestrator,
+  rescheduleRoutines,
+  schedulerStub,
+  startAgentOnTask,
+} from "../runtime";
 import { createRoutine, deleteRoutine, listRoutines, requireCanRun, updateRoutine } from "../services/routines";
 import { createAgent, listAgents, retireAgent } from "../services/agents";
 import { listReports, readReport, saveReport } from "../services/artifacts";
 import { commitFiles, ensureAgentRepo, repoFile, repoTree } from "../services/repos";
 import type { Caller } from "../services/caller";
 import { getTimezone } from "../services/settings";
+import { addEvidence, createDecision, getDecision, listDecisions, withdrawDecision } from "../services/decisions";
 import {
   cancelTask,
   checkCriterion,
@@ -49,6 +58,7 @@ export const allTools: ToolDef[] = [
       priority: z.number().int().min(1).max(4).optional().describe("1 = highest"),
       parent_id: z.string().optional().describe("Parent task id or identifier, for subtasks"),
       project_id: z.string().optional().describe("Project id. Defaults to 'default'"),
+      requires_approval: z.boolean().optional().describe("The task can't go to review or close without an approved Decision"),
     }),
     run: async (env, caller, args) => {
       const task = await createTask(env.DB_CORE, caller, args);
@@ -83,6 +93,7 @@ export const allTools: ToolDef[] = [
       state: z.enum(["todo", "in_progress", "review"]).optional(),
       assignee: z.string().optional().describe("Agent id. Principal only"),
       priority: z.number().int().min(1).max(4).optional().describe("Principal only"),
+      requires_approval: z.boolean().optional().describe("Principal only. Needs an approved Decision to go to review or close"),
     }),
     run: async (env, caller, { task, ...rest }) => {
       const updated = await updateTask(env.DB_CORE, caller, task, rest);
@@ -317,6 +328,99 @@ export const allTools: ToolDef[] = [
     },
   }),
 
+  // ---- decisions (task 015) ----
+  defineTool({
+    name: "decisions_request",
+    description:
+      "Escalate a call you shouldn't make alone (costly, irreversible, outside your area, or not settled by the task). " +
+      "Write the description in three parts:\n## What\nthe proposal: the action to take or the result to accept\n" +
+      "## Why\nwhy it's needed and what happens if we don't\n## How\nthe steps, what changes, how to undo it\n" +
+      "Add real evidence (report ids, artifact paths, command output, links), not restated claims. " +
+      "You'll get the outcome in this chat. Until then, don't do it.",
+    input: z.object({
+      title: z.string().describe("One line: what needs deciding"),
+      description: z.string().describe("Markdown with ## What, ## Why, ## How"),
+      evidence: z
+        .array(
+          z.object({
+            kind: z.enum(["text", "link", "report", "artifact", "command"]).optional(),
+            label: z.string().optional().describe("Short name, e.g. 'npm audit output'"),
+            content: z.string().describe("The evidence itself: text, URL, report id, repo path, or command + output"),
+          }),
+        )
+        .min(1),
+      task: z.string().optional().describe("Linked task identifier, e.g. FT-3"),
+    }),
+    run: async (env, caller, args) => {
+      const decision = await createDecision(env.DB_CORE, caller, args);
+      evaluateDecisionInBackground(env, decision.id);
+      return {
+        identifier: decision.identifier,
+        status: decision.status,
+        note: "Pending. Clef is evaluating it; you'll get the outcome in this chat. Don't act on it until then.",
+      };
+    },
+  }),
+  defineTool({
+    name: "decisions_add_evidence",
+    description: "Add evidence to one of your pending Decisions (Clef re-evaluates it).",
+    input: z.object({
+      decision: z.string().describe("Decision identifier, e.g. DEC-3"),
+      evidence: z
+        .array(
+          z.object({
+            kind: z.enum(["text", "link", "report", "artifact", "command"]).optional(),
+            label: z.string().optional(),
+            content: z.string(),
+          }),
+        )
+        .min(1),
+    }),
+    run: async (env, caller, args) => {
+      const decision = await addEvidence(env.DB_CORE, caller, args.decision, args.evidence);
+      evaluateDecisionInBackground(env, decision.id);
+      return { identifier: decision.identifier, evidence: decision.evidence.length, status: decision.status };
+    },
+  }),
+  defineTool({
+    name: "decisions_get",
+    description: "Get a Decision with its evidence and Clef's evaluation.",
+    input: z.object({ decision: z.string().describe("Decision identifier, e.g. DEC-3") }),
+    run: (env, _caller, args) => getDecision(env.DB_CORE, args.decision),
+  }),
+  defineTool({
+    name: "decisions_list",
+    description: "List Decisions. status: pending (default), approved, rejected, withdrawn, all. mine: only the ones you requested.",
+    input: z.object({
+      status: z.enum(["pending", "approved", "rejected", "withdrawn", "all"]).optional(),
+      mine: z.boolean().optional(),
+      task: z.string().optional(),
+    }),
+    run: async (env, caller, args) => {
+      const agent = args.mine && caller.kind === "agent" ? caller.id : undefined;
+      const { decisions, counts } = await listDecisions(env.DB_CORE, { status: args.status, agent, task: args.task });
+      return {
+        counts,
+        decisions: decisions.map((d) => ({
+          identifier: d.identifier,
+          title: d.title,
+          status: d.status,
+          requested_by: d.requested_by,
+          task: d.task_identifier,
+          decided_by: d.decided_by,
+          recommendation: d.eval_recommendation,
+          confidence: d.eval_confidence,
+        })),
+      };
+    },
+  }),
+  defineTool({
+    name: "decisions_withdraw",
+    description: "Withdraw one of your pending Decisions (e.g. it's no longer needed).",
+    input: z.object({ decision: z.string(), reason: z.string() }),
+    run: (env, caller, args) => withdrawDecision(env.DB_CORE, caller, args.decision, args.reason),
+  }),
+
   // ---- time ----
   defineTool({
     name: "time_now",
@@ -350,11 +454,13 @@ const TIER_TOOLS: Record<string, string[]> = {
     "agents_list", "agents_create", "agents_retire",
     "routines_list", "routines_create", "routines_update", "routines_delete", "routines_run",
     "reports_save", "reports_list", "reports_read", "artifacts_write", "artifacts_read", "artifacts_list", "time_now",
+    "decisions_request", "decisions_add_evidence", "decisions_get", "decisions_list", "decisions_withdraw",
   ],
   operator: [
     "tasks_get", "tasks_update", "tasks_comment",
     "routines_list", "routines_create", "routines_update", "routines_delete", "routines_run",
     "reports_save", "reports_list", "reports_read", "artifacts_write", "artifacts_read", "artifacts_list", "time_now",
+    "decisions_request", "decisions_add_evidence", "decisions_get", "decisions_list", "decisions_withdraw",
   ],
 };
 

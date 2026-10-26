@@ -5,6 +5,7 @@
 import { handleAgentsApi } from "./api/agents";
 import { handleArtifactsApi } from "./api/artifacts";
 import { handleContainersApi } from "./api/containers";
+import { handleDecisionsApi } from "./api/decisions";
 import { handleOrchestratorApi } from "./api/orchestrator";
 import { handleOverviewApi } from "./api/overview";
 import { handleProjectsApi } from "./api/projects";
@@ -88,6 +89,7 @@ export default {
 
     const apiResponse =
       (await handleContainersApi(request, env, pathname)) ??
+      (await handleDecisionsApi(request, env, pathname)) ??
       (await handleArtifactsApi(request, env, pathname)) ??
       (await handleTasksApi(request, env, pathname)) ??
       (await handleProjectsApi(request, env, pathname)) ??

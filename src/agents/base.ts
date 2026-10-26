@@ -38,6 +38,13 @@ export const CODE_MODE_RULE =
   "Use it when a job needs several tool calls, loops, filtering or math. For a single tool call, call the tool directly. " +
   "Save anything that must last with artifacts_write or reports_save.";
 
+// Decisions (task 015): when to escalate instead of acting.
+export const DECISIONS_RULE =
+  "Before anything costly, irreversible, outside your area, or not settled by your task, escalate it with decisions_request " +
+  "instead of doing it: a description with ## What, ## Why and ## How, plus real evidence (report ids, artifact paths, " +
+  "command output, links). Then keep working on what doesn't depend on it, or stop and say you're waiting. The outcome " +
+  "arrives in this chat; act only on an approved Decision. If a task requires approval, it can't go to review without one.";
+
 export const SANDBOX_TOOLS = ["sandbox_run", "sandbox_status", "sandbox_reset"];
 
 const DESKTOP_RULE =
@@ -157,7 +164,7 @@ export abstract class FlaretownAgent extends Think<Env> {
     const config = await getAgentConfig(this.env.DB_CORE, this.agentId());
     const model = createAI({ binding: this.env.AI })(config.model);
     const hidden = new Set<string>();
-    const rules: string[] = [];
+    const rules: string[] = [DECISIONS_RULE];
     if (config.code_mode_active) rules.push(CODE_MODE_RULE);
     else hidden.add("exec");
     if (config.sandbox_active) rules.push(sandboxRule(config.container_image, config.sandbox_internet, config.sandbox_persist));
