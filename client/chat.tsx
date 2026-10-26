@@ -612,6 +612,33 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+// When a message was sent (metadata.createdAt, set by the client for user messages and by the
+// agent for its replies). Older messages have none.
+function messageDate(m: { metadata?: unknown }): string {
+  const at = (m.metadata as { createdAt?: string } | undefined)?.createdAt;
+  if (!at) return "Date not recorded";
+  const d = new Date(at);
+  return Number.isNaN(d.getTime()) ? "Date not recorded" : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+function ClockButton({ on, onClick }: { on: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`copy${on ? " on" : ""}`}
+      onClick={onClick}
+      aria-pressed={on}
+      aria-label={on ? "Hide dates" : "Show dates of this and earlier messages"}
+      title={on ? "Hide dates" : "Show dates"}
+    >
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5l3 2" />
+      </svg>
+    </button>
+  );
+}
+
 function TasksPanel({
   tasks,
   busy,
@@ -675,7 +702,6 @@ function CompactSetting({ config, onChange }: { config: AgentConfig; onChange: (
           </button>
         )}
       </p>
-      <p className="muted">Type /compact in the chat to compact now.</p>
     </>
   );
 }
@@ -780,6 +806,8 @@ function Chat({ agents }: { agents: AgentInfo[] }) {
   const [input, setInput] = useState(INITIAL_DRAFT);
   useEffect(() => writeDraft(input), [input]);
   const [panel, setPanel] = useState<Panel>(INITIAL_PANEL);
+  // Dates are hidden by default; the clock on a reply shows them for it and every earlier message.
+  const [datesUpTo, setDatesUpTo] = useState<number | null>(null);
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [config, setConfig] = useState<AgentConfig | null>(null);
   const [models, setModels] = useState<Model[]>([]);
@@ -835,7 +863,7 @@ function Chat({ agents }: { agents: AgentInfo[] }) {
       return;
     }
     pinnedRef.current = true;
-    sendMessage({ text });
+    sendMessage({ text, metadata: { createdAt: new Date().toISOString() } });
     setInput("");
     textareaRef.current?.focus();
   };
@@ -866,7 +894,7 @@ function Chat({ agents }: { agents: AgentInfo[] }) {
   const askStatus = (task: TaskSummary) => {
     if (busy) return;
     pinnedRef.current = true;
-    sendMessage({ text: `What is the status of ${task.identifier}?` });
+    sendMessage({ text: `What is the status of ${task.identifier}?`, metadata: { createdAt: new Date().toISOString() } });
   };
 
   const toggle = (p: Exclude<Panel, null>) => setPanel((current) => (current === p ? null : p));
@@ -979,8 +1007,9 @@ function Chat({ agents }: { agents: AgentInfo[] }) {
             pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
           }}
         >
-          {messages.map((m) => (
+          {messages.map((m, idx) => (
             <li key={m.id} className={m.role}>
+              {datesUpTo !== null && idx <= datesUpTo && <time className="msg-date">{messageDate(m)}</time>}
               {m.parts.map((part, i) =>
                 part.type === "text" ? (
                   m.role === "assistant" ? (
@@ -992,7 +1021,15 @@ function Chat({ agents }: { agents: AgentInfo[] }) {
                   <ToolRow key={i} part={part as ToolPart} />
                 ) : null,
               )}
-              {m.role === "assistant" && messageText(m) && <CopyButton text={messageText(m)} />}
+              {m.role === "assistant" && messageText(m) && (
+                <div className="msg-actions">
+                  <ClockButton
+                    on={datesUpTo !== null && idx <= datesUpTo}
+                    onClick={() => setDatesUpTo(datesUpTo !== null && idx <= datesUpTo ? null : idx)}
+                  />
+                  <CopyButton text={messageText(m)} />
+                </div>
+              )}
             </li>
           ))}
           {busy && !lastAssistantHasText(messages) && (

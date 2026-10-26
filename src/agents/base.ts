@@ -128,6 +128,10 @@ export abstract class FlaretownAgent extends Think<Env> {
     });
   }
 
+  // Stamp every reply with when it started, so the chat can show message dates.
+  override messageMetadata = ({ part }: { part: { type: string } }) =>
+    part.type === "start" ? { createdAt: new Date().toISOString() } : undefined;
+
   // Wait for MCP servers to (re)connect before a turn, so their tools are there.
   override waitForMcpConnections = { timeout: 10_000 };
 
@@ -445,7 +449,9 @@ export abstract class FlaretownAgent extends Think<Env> {
 
   // Start a turn in this agent's chat with a message (shows up live for anyone watching).
   async say(text: string): Promise<void> {
-    await this.saveMessages([{ id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text }] }]);
+    await this.saveMessages([
+      { id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text }], metadata: { createdAt: new Date().toISOString() } },
+    ]);
   }
 
   // Called by Run now and the Orchestrator once the task is claimed.

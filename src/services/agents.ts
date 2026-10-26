@@ -6,6 +6,7 @@ import { type Caller, callerName, isHumanOrPrincipal } from "./caller";
 import { ServiceError } from "./errors";
 import { defaultModelFor } from "./agentConfig";
 import { checkImageName, checkInstance } from "./containers";
+import { getOrchestratorSettings } from "./settings";
 
 export type Tier = "principal" | "lead" | "operator";
 
@@ -35,8 +36,7 @@ export interface AgentSummary extends Agent {
   open_tasks: number;
 }
 
-export const MAX_LEADS = 5;
-export const MAX_OPERATORS_PER_LEAD = 5;
+// Max Leads and Operators per Lead are settings (Settings → Agents, src/services/settings.ts).
 
 function forbidden(rule: string, hint: string) {
   return new ServiceError("forbidden", `Not allowed: ${rule}`, hint, 403);
@@ -106,6 +106,7 @@ export async function createAgent(db: D1Database, caller: Caller, input: CreateA
   const exists = await db.prepare("SELECT id FROM agents WHERE name = ?").bind(name).first();
   if (exists) throw new ServiceError("conflict", `An agent named ${name} already exists`, "Pick another name.", 409);
 
+  const limits = await getOrchestratorSettings(db);
   let parentId: string;
   if (type === "lead") {
     // A Lead always reports to the Principal.
@@ -113,7 +114,9 @@ export async function createAgent(db: D1Database, caller: Caller, input: CreateA
       throw forbidden("a Lead always reports to the Principal", "Leave the parent empty for a Lead.");
     }
     const { n } = (await db.prepare("SELECT COUNT(*) AS n FROM agents WHERE tier = 'lead' AND status = 'active'").first<{ n: number }>())!;
-    if (n >= MAX_LEADS) throw forbidden(`max ${MAX_LEADS} Leads`, "Retire a Lead first.");
+    if (n >= limits.agents_max_leads) {
+      throw forbidden(`max ${limits.agents_max_leads} Leads`, "Retire a Lead first, or raise Max Leads in Settings.");
+    }
     parentId = "principal";
   } else {
     if (!input.parent_id) throw forbidden("an Operator must be under a Lead", "Choose the Lead it reports to.");
@@ -125,7 +128,9 @@ export async function createAgent(db: D1Database, caller: Caller, input: CreateA
       .prepare("SELECT COUNT(*) AS n FROM agents WHERE parent_id = ? AND status = 'active'")
       .bind(parent.id)
       .first<{ n: number }>())!;
-    if (n >= MAX_OPERATORS_PER_LEAD) throw forbidden(`max ${MAX_OPERATORS_PER_LEAD} Operators per Lead`, `${parent.name} is full.`);
+    if (n >= limits.agents_max_operators_per_lead) {
+      throw forbidden(`max ${limits.agents_max_operators_per_lead} Operators per Lead`, `${parent.name} is full. Retire one, or raise the limit in Settings.`);
+    }
     parentId = parent.id;
   }
 

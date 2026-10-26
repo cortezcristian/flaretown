@@ -82,6 +82,10 @@
     body.switching .shell:not(.skeleton) { filter: blur(4px); opacity: .6; pointer-events: none; transition: filter .2s ease, opacity .2s ease; }
     body.switching::after { content: attr(data-switching); position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 14px; pointer-events: none; }
     .messages li .copy:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .messages li .msg-actions { display: flex; justify-content: flex-end; gap: 2px; margin-top: 4px; }
+    .messages li .msg-actions .copy { margin: 0; }
+    .messages li .copy.on { color: var(--accent); }
+    .messages li .msg-date { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; }
     .messages p.plain { margin: 0; white-space: pre-wrap; }
     .tool { margin: 6px 0; font-size: 13px; color: var(--muted); border-left: 2px solid var(--accent); padding-left: 8px; }
     .tool.failed { border-left-color: #dc2626; }
