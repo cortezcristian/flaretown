@@ -51,6 +51,7 @@
           <button data-tab="servers">Servers<span class="count" id="c-servers"></span></button>
           <button data-tab="secrets">Secrets<span class="count" id="c-secrets"></span></button>
           <button data-tab="import">Import / export</button>
+          <input type="search" class="filter" id="q" placeholder="Filter…" aria-label="Filter servers and secrets">
         </div>
         <div class="error" id="error"></div>
         <div id="content"><div class="empty">Loading…</div></div>
@@ -76,6 +77,8 @@
     let secrets = [];
     let status = null;
     let agents = [];
+    let query = "";
+    const matches = (...fields) => !query || fields.some((f) => String(f ?? "").toLowerCase().includes(query));
 
     async function api(method, url, body) {
       const res = await fetch(url, { method, headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined });
@@ -109,17 +112,19 @@
     // ---- servers ----------------------------------------------------------------------------
     function renderServers() {
       el("c-servers").textContent = servers.length;
-      const builtin = servers.filter((s) => s.builtin);
-      const custom = servers.filter((s) => !s.builtin);
+      const shown = servers.filter((s) => matches(s.id, s.name, s.url, s.description, s.auth, s.policy, ...s.agents.map((a) => a.agent_name)));
+      const builtin = shown.filter((s) => s.builtin);
+      const custom = shown.filter((s) => !s.builtin);
       el("content").innerHTML = `
-        <h3 class="section">Cloudflare</h3>
+        ${query && !shown.length ? `<div class="empty">No servers match “${esc(query)}”.</div>` : ""}
+        ${builtin.length ? `<h3 class="section">Cloudflare</h3>` : ""}
         <div class="cards">${builtin.map((s) => `
           <div class="card ${s.id === selected ? "selected" : ""}" data-id="${esc(s.id)}">
             <div class="top"><strong>${esc(s.name)}</strong><span class="pill ${esc(s.policy)}">${esc(policyLabel(s.policy))}</span></div>
             <div class="desc">${esc(s.description)}</div>
             <div class="meta">${esc(authLabel(s.auth))} · ${s.agents.length} agent(s)</div>
           </div>`).join("")}</div>
-        <h3 class="section">Custom</h3>
+        ${custom.length || !query ? `<h3 class="section">Custom</h3>` : ""}
         ${custom.length ? `<table><thead><tr><th>Server</th><th>URL</th><th>Auth</th><th>Policy</th><th>Agents</th></tr></thead><tbody>${
           custom.map((s) => `<tr data-id="${esc(s.id)}" class="${s.id === selected ? "selected" : ""}">
             <td><strong>${esc(s.name)}</strong><div class="desc">${esc(s.id)}</div></td>
@@ -128,7 +133,7 @@
             <td><span class="pill ${esc(s.policy)}">${esc(policyLabel(s.policy))}</span></td>
             <td>${s.agents.length}</td>
           </tr>`).join("")}</tbody></table>`
-          : `<div class="empty">No custom servers. Add one, or import your editor's mcpServers JSON.</div>`}`;
+          : query ? "" : `<div class="empty">No custom servers. Add one, or import your editor's mcpServers JSON.</div>`}`;
       el("content").querySelectorAll("[data-id]").forEach((n) => n.addEventListener("click", () => openServer(n.dataset.id)));
     }
 
@@ -285,7 +290,7 @@
       el("content").innerHTML = `${keyBanner()}
         ${status?.key_valid ? `<div class="form-actions" style="justify-content:flex-start;margin-bottom:10px"><button class="primary" id="new-secret">+ Add secret</button></div>` : ""}
         ${secrets.length ? `<table><thead><tr><th>Name</th><th>Value</th><th>Used by</th><th>Updated</th><th></th></tr></thead><tbody>${
-          secrets.map((x) => `<tr>
+          secrets.filter((x) => matches(x.name, x.description, ...x.used_by)).map((x) => `<tr>
             <td><strong>${esc(x.name)}</strong>${x.description ? `<div class="desc">${esc(x.description)}</div>` : ""}</td>
             <td class="meta">${esc(x.masked)}${x.readable ? "" : ` <span class="pill failed">unreadable</span>`}</td>
             <td>${x.used_by.map((s) => `<a href="?tab=servers&server=${esc(s)}">${esc(s)}</a>`).join(", ") || `<span class="meta">—</span>`}</td>
@@ -385,6 +390,7 @@
 
     function render() {
       document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+      el("q").hidden = tab === "import";
       el("c-servers").textContent = servers.length;
       el("c-secrets").textContent = secrets.length;
       if (tab === "servers") renderServers();
@@ -400,6 +406,11 @@
       agents = (a.agents ?? []).filter((g) => g.status !== "retired");
       if (tab !== "import") render();
     }
+
+    el("q").addEventListener("input", () => {
+      query = el("q").value.trim().toLowerCase();
+      if (tab !== "import") render();
+    });
 
     document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => {
       tab = b.dataset.tab;

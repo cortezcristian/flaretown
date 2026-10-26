@@ -48,6 +48,7 @@
         <div class="tabs">
           <button data-tab="library">Library<span class="count" id="c-library"></span></button>
           <button data-tab="suggested">Suggested</button>
+          <input type="search" class="filter" id="q" placeholder="Filter skills…" aria-label="Filter skills">
         </div>
         <div class="error" id="error"></div>
         <div id="content"><div class="empty">Loading…</div></div>
@@ -71,6 +72,9 @@
     let library = [];
     let agents = [];
     let selected = new URLSearchParams(location.search).get("skill");
+    let query = "";
+    let suggested = null;
+    const matches = (...fields) => !query || fields.some((f) => String(f ?? "").toLowerCase().includes(query));
 
     async function api(method, url, body, raw) {
       const res = await fetch(url, {
@@ -136,8 +140,10 @@
     function renderLibrary() {
       el("c-library").textContent = library.length;
       if (!library.length) { el("content").innerHTML = `<div class="empty">No skills yet. Add one, or install from Suggested.</div>`; return; }
+      const shown = library.filter((s) => matches(s.name, s.description, s.source));
+      if (!shown.length) { el("content").innerHTML = `<div class="empty">No skills match “${esc(query)}”.</div>`; return; }
       el("content").innerHTML = `<table><thead><tr><th>Skill</th><th>Source</th><th>Version</th><th>Agents</th><th>All agents</th></tr></thead><tbody>${
-        library.map((s) => `<tr data-name="${esc(s.name)}" class="${s.name === selected ? "selected" : ""}">
+        shown.map((s) => `<tr data-name="${esc(s.name)}" class="${s.name === selected ? "selected" : ""}">
           <td><strong>${esc(s.name)}</strong><div class="desc">${esc(s.description)}</div></td>
           <td>${sourceCell(s)}</td>
           <td class="meta">${esc(s.version ?? "—")}</td>
@@ -274,13 +280,15 @@ description: How we write release notes. Use when a task asks for release notes.
 
     // ---- suggested --------------------------------------------------------------------------
     async function renderSuggested() {
-      el("content").innerHTML = `<div class="empty">Loading the official Cloudflare skills…</div>`;
+      if (!suggested) el("content").innerHTML = `<div class="empty">Loading the official Cloudflare skills…</div>`;
       try {
-        const data = await api("GET", "/api/skills/suggested");
+        const data = suggested ?? (suggested = await api("GET", "/api/skills/suggested"));
+        const shown = data.skills.filter((s) => matches(s.name, s.description));
         el("content").innerHTML = `<p class="meta">From <a href="${esc(data.source)}" target="_blank" rel="noopener">${esc(data.source)}</a> (Apache-2.0). Installing shows the skill for review first.</p>
           <table><thead><tr><th>Skill</th><th></th></tr></thead><tbody>${
-          data.skills.map((s) => `<tr><td><strong>${esc(s.name)}</strong><div class="desc">${esc(s.description)}</div></td>
-            <td>${s.installed ? `<span class="pill">installed</span>` : `<button class="ghost" data-url="${esc(s.url)}">Install</button>`}</td></tr>`).join("")
+          (shown.map((s) => `<tr><td><strong>${esc(s.name)}</strong><div class="desc">${esc(s.description)}</div></td>
+            <td>${s.installed ? `<span class="pill">installed</span>` : `<button class="ghost" data-url="${esc(s.url)}">Install</button>`}</td></tr>`).join("") ||
+            `<tr><td colspan="2" class="meta">No skills match “${esc(query)}”.</td></tr>`)
         }</tbody></table>`;
         el("content").querySelectorAll("[data-url]").forEach((b) => b.addEventListener("click", () => openAdd(b.dataset.url)));
       } catch (err) {
@@ -301,6 +309,12 @@ description: How we write release notes. Use when a task asks for release notes.
       el("c-library").textContent = library.length;
       if (tab === "library") renderLibrary();
     }
+
+    el("q").addEventListener("input", () => {
+      query = el("q").value.trim().toLowerCase();
+      if (tab === "library") renderLibrary();
+      else renderSuggested();
+    });
 
     el("scripts").addEventListener("change", async () => {
       try { await api("PATCH", "/api/skills/settings", { scripts_enabled: el("scripts").checked }); }
