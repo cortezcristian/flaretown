@@ -109,7 +109,7 @@
       showPanel("New agent", `
         <form id="new-form">
           <label for="f-name">Name</label>
-          <input id="f-name" required placeholder="e.g. Reports">
+          <input id="f-name" required placeholder="e.g. Scout">
 
           <label>Type</label>
           <div class="segmented" id="f-type">
@@ -125,8 +125,9 @@
               : `<option value="">No Leads yet: create a Lead first</option>`}</select>
           </div>
 
-          <label for="f-area">Area</label>
-          <input id="f-area" placeholder="What it owns, e.g. status reports">
+          <label for="f-area">What it does</label>
+          <textarea id="f-area" rows="3" placeholder="e.g. Watches competitors' websites and pricing, and reports what changed every Monday."></textarea>
+          <div class="meta">Its role in a few sentences. It goes into the agent's prompt and helps the Principal route work to it.</div>
 
           <label for="f-model">Model</label>
           <select id="f-model">${models.map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join("")}</select>
@@ -206,7 +207,7 @@
       showPanel(a.name, `
         <div class="meta">${esc(a.tier)} · ${esc(a.id)}</div>
         <label>Reports to</label><div>${a.parent_id ? esc(nameOf(a.parent_id)) : "Human"}</div>
-        ${a.area ? `<label>Area</label><div>${esc(a.area)}</div>` : ""}
+        ${a.area ? `<label>What it does</label><div style="white-space:pre-wrap">${esc(a.area)}</div>` : ""}
         <label>Model</label><div>${esc(modelName(a.model))}</div>
         <label>Code Mode</label>
         <label style="display:flex;align-items:center;gap:8px;color:var(--fg);margin-top:0"><input type="checkbox" id="d-codemode" style="width:auto" ${a.code_mode ? "checked" : ""} ${a.status === "retired" ? "disabled" : ""}> exec tool <span class="meta">(needs the global switch in Orchestrator)</span></label>
