@@ -158,3 +158,6 @@ public/chat.js
 public/overview.js
 public/palette.js
 src/skills/bundled.generated.ts
+
+# macOS
+.DS_Store
