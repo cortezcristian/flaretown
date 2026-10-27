@@ -10,13 +10,14 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy && wrangler d1 migrations apply DB_CORE --remote && wrangler d1 migrations apply DB_RUNS --remote",
+    "deploy:no-containers": "wrangler deploy --containers-rollout=none && wrangler d1 migrations apply DB_CORE --remote && wrangler d1 migrations apply DB_RUNS --remote",
     "types": "wrangler types",
-    "typecheck": "wrangler types && tsc --noEmit && tsc --noEmit -p client",
+    "typecheck": "node scripts/build-skills.mjs && wrangler types && tsc --noEmit && tsc --noEmit -p client",
     "db:migrate:local": "wrangler d1 migrations apply DB_CORE --local && wrangler d1 migrations apply DB_RUNS --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB_CORE --remote && wrangler d1 migrations apply DB_RUNS --remote",
     "teardown": "wrangler delete && wrangler d1 delete flaretown-core && wrangler d1 delete flaretown-runs && wrangler r2 bucket delete flaretown-artifacts && echo 'Also delete the agent repos in Cloudflare Artifacts (agent-*), the sandbox container apps and images (pnpm wrangler containers list / delete, pnpm wrangler containers images list / delete), and agents/*/browser-profile.tar.gz in R2'",
     "check:images": "bash scripts/check-images.sh",
-    "build:client": "esbuild client/chat.tsx client/overview.ts client/palette.tsx --bundle --format=esm --minify --outdir=public"
+    "build:client": "node scripts/build-skills.mjs && esbuild client/chat.tsx client/overview.ts client/palette.tsx --bundle --format=esm --minify --outdir=public"
   },
   "dependencies": {
     "@ai-sdk/provider": "3.0.19",
@@ -47,7 +48,11 @@
     "esbuild": "0.28.2"
   },
   "cloudflare": {
-    "bindings": {}
+    "bindings": {
+      "FLARETOWN_SECRETS_KEY": {
+        "description": "Encrypts the secrets you add for MCP servers. Generate it with `openssl rand -base64 32` and keep a copy: if you lose it, those secrets can't be recovered. You can leave it empty and set it later; only MCP secrets need it."
+      }
+    }
   },
   "packageManager": "pnpm@12.15.0"
 }

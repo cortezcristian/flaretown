@@ -2,13 +2,25 @@
 // agents' Think tools. Each calls the same service function as its REST endpoint (SPEC-api 2.2).
 
 import { z } from "zod";
-import { afterSubtaskFinished, notifyReviewer, pokeOrchestrator, rescheduleRoutines, schedulerStub, startAgentOnTask } from "../runtime";
+import {
+  afterSubtaskFinished,
+  evaluateDecisionInBackground,
+  notifyReviewer,
+  pokeOrchestrator,
+  rescheduleRoutines,
+  schedulerStub,
+  startAgentOnTask,
+} from "../runtime";
 import { createRoutine, deleteRoutine, listRoutines, requireCanRun, updateRoutine } from "../services/routines";
 import { createAgent, listAgents, retireAgent } from "../services/agents";
 import { listReports, readReport, saveReport } from "../services/artifacts";
 import { commitFiles, ensureAgentRepo, repoFile, repoTree } from "../services/repos";
 import type { Caller } from "../services/caller";
 import { getTimezone } from "../services/settings";
+import { addEvidence, createDecision, getDecision, listDecisions, withdrawDecision } from "../services/decisions";
+import { listSkills, setAgentSkills } from "../services/skills";
+import { attachServer, detachServer, listForAgents } from "../services/mcps";
+import { createProject, getProject, listProjects, setProjectStatus, updateProject } from "../services/projects";
 import {
   cancelTask,
   checkCriterion,
@@ -48,7 +60,8 @@ export const allTools: ToolDef[] = [
       assignee: z.string().optional().describe("Agent id, e.g. lead-1"),
       priority: z.number().int().min(1).max(4).optional().describe("1 = highest"),
       parent_id: z.string().optional().describe("Parent task id or identifier, for subtasks"),
-      project_id: z.string().optional().describe("Project id. Defaults to 'default'"),
+      project_id: z.string().optional().describe("Project id (projects_list). Subtasks default to the parent's project, other tasks to 'default'"),
+      requires_approval: z.boolean().optional().describe("The task can't go to review or close without an approved Decision"),
     }),
     run: async (env, caller, args) => {
       const task = await createTask(env.DB_CORE, caller, args);
@@ -83,6 +96,8 @@ export const allTools: ToolDef[] = [
       state: z.enum(["todo", "in_progress", "review"]).optional(),
       assignee: z.string().optional().describe("Agent id. Principal only"),
       priority: z.number().int().min(1).max(4).optional().describe("Principal only"),
+      requires_approval: z.boolean().optional().describe("Principal only. Needs an approved Decision to go to review or close"),
+      project_id: z.string().optional().describe("Principal only. Move the task (and its subtasks) to this project"),
     }),
     run: async (env, caller, { task, ...rest }) => {
       const updated = await updateTask(env.DB_CORE, caller, task, rest);
@@ -176,8 +191,27 @@ export const allTools: ToolDef[] = [
       sandbox_persist: z.boolean().optional().describe("Sandbox files survive restarts (snapshots). Default off"),
       container_image: z.string().optional().describe("Sandbox image: debian (default, Node/npm), desktop (Chromium, noVNC) or a custom image"),
       container_instance: z.enum(["lite", "basic", "standard-1", "standard-2", "standard-3", "standard-4"]).optional().describe("Container size. Default per image"),
+      skills: z.array(z.string()).optional().describe("Skill names from the library (see skills_list)"),
     }),
-    run: (env, caller, args) => createAgent(env.DB_CORE, caller, args),
+    run: async (env, caller, { skills, ...args }) => {
+      const agent = await createAgent(env.DB_CORE, caller, args);
+      if (skills?.length) await setAgentSkills(env.DB_CORE, caller, agent.id, skills);
+      return agent;
+    },
+  }),
+  defineTool({
+    name: "skills_list",
+    description: "List the skills installed in Flaretown (name, description, whether every agent has it).",
+    input: z.object({}),
+    run: async (env) =>
+      (await listSkills(env.DB_CORE)).map((s) => ({ name: s.name, description: s.description, all_agents: s.all_agents, source: s.source })),
+  }),
+  defineTool({
+    name: "agents_set_skills",
+    description:
+      "Set the skills an agent has (replaces its list; all-agents skills stay). The Principal can set any agent's skills; a Lead only its own Operators'.",
+    input: z.object({ agent: z.string().describe("Agent id"), skills: z.array(z.string()).describe("Skill names, see skills_list") }),
+    run: (env, caller, args) => setAgentSkills(env.DB_CORE, caller, args.agent, args.skills),
   }),
   defineTool({
     name: "agents_retire",
@@ -317,6 +351,99 @@ export const allTools: ToolDef[] = [
     },
   }),
 
+  // ---- decisions (task 015) ----
+  defineTool({
+    name: "decisions_request",
+    description:
+      "Escalate a call you shouldn't make alone (costly, irreversible, outside your area, or not settled by the task). " +
+      "Write the description in three parts:\n## What\nthe proposal: the action to take or the result to accept\n" +
+      "## Why\nwhy it's needed and what happens if we don't\n## How\nthe steps, what changes, how to undo it\n" +
+      "Add real evidence (report ids, artifact paths, command output, links), not restated claims. " +
+      "You'll get the outcome in this chat. Until then, don't do it.",
+    input: z.object({
+      title: z.string().describe("One line: what needs deciding"),
+      description: z.string().describe("Markdown with ## What, ## Why, ## How"),
+      evidence: z
+        .array(
+          z.object({
+            kind: z.enum(["text", "link", "report", "artifact", "command"]).optional(),
+            label: z.string().optional().describe("Short name, e.g. 'npm audit output'"),
+            content: z.string().describe("The evidence itself: text, URL, report id, repo path, or command + output"),
+          }),
+        )
+        .min(1),
+      task: z.string().optional().describe("Linked task identifier, e.g. FT-3"),
+    }),
+    run: async (env, caller, args) => {
+      const decision = await createDecision(env.DB_CORE, caller, args);
+      evaluateDecisionInBackground(env, decision.id);
+      return {
+        identifier: decision.identifier,
+        status: decision.status,
+        note: "Pending. Clef is evaluating it; you'll get the outcome in this chat. Don't act on it until then.",
+      };
+    },
+  }),
+  defineTool({
+    name: "decisions_add_evidence",
+    description: "Add evidence to one of your pending Decisions (Clef re-evaluates it).",
+    input: z.object({
+      decision: z.string().describe("Decision identifier, e.g. DEC-3"),
+      evidence: z
+        .array(
+          z.object({
+            kind: z.enum(["text", "link", "report", "artifact", "command"]).optional(),
+            label: z.string().optional(),
+            content: z.string(),
+          }),
+        )
+        .min(1),
+    }),
+    run: async (env, caller, args) => {
+      const decision = await addEvidence(env.DB_CORE, caller, args.decision, args.evidence);
+      evaluateDecisionInBackground(env, decision.id);
+      return { identifier: decision.identifier, evidence: decision.evidence.length, status: decision.status };
+    },
+  }),
+  defineTool({
+    name: "decisions_get",
+    description: "Get a Decision with its evidence and Clef's evaluation.",
+    input: z.object({ decision: z.string().describe("Decision identifier, e.g. DEC-3") }),
+    run: (env, _caller, args) => getDecision(env.DB_CORE, args.decision),
+  }),
+  defineTool({
+    name: "decisions_list",
+    description: "List Decisions. status: pending (default), approved, rejected, withdrawn, all. mine: only the ones you requested.",
+    input: z.object({
+      status: z.enum(["pending", "approved", "rejected", "withdrawn", "all"]).optional(),
+      mine: z.boolean().optional(),
+      task: z.string().optional(),
+    }),
+    run: async (env, caller, args) => {
+      const agent = args.mine && caller.kind === "agent" ? caller.id : undefined;
+      const { decisions, counts } = await listDecisions(env.DB_CORE, { status: args.status, agent, task: args.task });
+      return {
+        counts,
+        decisions: decisions.map((d) => ({
+          identifier: d.identifier,
+          title: d.title,
+          status: d.status,
+          requested_by: d.requested_by,
+          task: d.task_identifier,
+          decided_by: d.decided_by,
+          recommendation: d.eval_recommendation,
+          confidence: d.eval_confidence,
+        })),
+      };
+    },
+  }),
+  defineTool({
+    name: "decisions_withdraw",
+    description: "Withdraw one of your pending Decisions (e.g. it's no longer needed).",
+    input: z.object({ decision: z.string(), reason: z.string() }),
+    run: (env, caller, args) => withdrawDecision(env.DB_CORE, caller, args.decision, args.reason),
+  }),
+
   // ---- time ----
   defineTool({
     name: "time_now",
@@ -342,19 +469,79 @@ export const allTools: ToolDef[] = [
 ];
 
 // Which tools each tier gets (SPEC-agents section 3, task authority).
+// ---- MCP servers (task 018) and projects (task 019) ----
+allTools.push(
+  defineTool({
+    name: "projects_list",
+    description: "List projects with their open, in-review and recent done task counts, owner Lead and status. Use the id as project_id for tasks.",
+    input: z.object({ status: z.enum(["active", "archived", "all"]).optional().describe("Default active") }),
+    run: (env, _caller, args) => listProjects(env.DB_CORE, { status: args.status ?? "active" }),
+  }),
+  defineTool({
+    name: "projects_create",
+    description:
+      "Create a project when a new stream of work starts (a product, client or initiative), then put its tasks in it. Principal only. owner_id: optional Lead that owns it.",
+    input: z.object({
+      name: z.string(),
+      description: z.string().optional().describe("What the project is about, one paragraph"),
+      owner_id: z.string().optional().describe("Lead id"),
+    }),
+    run: (env, caller, args) => createProject(env.DB_CORE, caller, args),
+  }),
+  defineTool({
+    name: "projects_update",
+    description: "Rename a project, change its description or owner Lead, or archive / unarchive it. Principal only. Default can't be archived.",
+    input: z.object({
+      project: z.string().describe("Project id"),
+      name: z.string().optional(),
+      description: z.string().optional(),
+      owner_id: z.string().nullable().optional().describe("Lead id, or null for none"),
+      status: z.enum(["active", "archived"]).optional(),
+    }),
+    run: async (env, caller, { project, status, ...rest }) => {
+      if (Object.values(rest).some((v) => v !== undefined)) await updateProject(env.DB_CORE, caller, project, rest);
+      if (status) return setProjectStatus(env.DB_CORE, caller, project, status);
+      return getProject(env.DB_CORE, project);
+    },
+  }),
+  defineTool({
+    name: "mcps_list",
+    description:
+      "List the MCP servers set up in Flaretown (id, name, auth, policy) and which agents have them. agent filters to one agent. Never shows secrets.",
+    input: z.object({ agent: z.string().optional().describe("Agent id") }),
+    run: (env, _caller, args) => listForAgents(env.DB_CORE, args.agent),
+  }),
+  defineTool({
+    name: "mcps_attach",
+    description:
+      "Give an agent an MCP server: its tools show up in that agent's next turn. Only servers with policy allowed and no OAuth. The Principal can attach to any agent; a Lead only to its own Operators.",
+    input: z.object({ agent: z.string().describe("Agent id"), server: z.string().describe("MCP server id, see mcps_list") }),
+    run: (env, caller, args) => attachServer(env, caller, args.agent, args.server),
+  }),
+  defineTool({
+    name: "mcps_detach",
+    description: "Remove an MCP server from an agent. The Principal can do it for any agent; a Lead only for its own Operators.",
+    input: z.object({ agent: z.string().describe("Agent id"), server: z.string().describe("MCP server id") }),
+    run: (env, caller, args) => detachServer(env, caller, args.agent, args.server),
+  }),
+);
+
 const TIER_TOOLS: Record<string, string[]> = {
   principal: allTools.map((t) => t.name),
   lead: [
     "tasks_list", "tasks_get", "tasks_update", "tasks_comment", "tasks_create_subtask",
     "tasks_check_criterion", "tasks_close", "tasks_send_back", "tasks_cancel",
-    "agents_list", "agents_create", "agents_retire",
+    "agents_list", "agents_create", "agents_retire", "agents_set_skills", "skills_list",
+    "mcps_list", "mcps_attach", "mcps_detach", "projects_list",
     "routines_list", "routines_create", "routines_update", "routines_delete", "routines_run",
     "reports_save", "reports_list", "reports_read", "artifacts_write", "artifacts_read", "artifacts_list", "time_now",
+    "decisions_request", "decisions_add_evidence", "decisions_get", "decisions_list", "decisions_withdraw",
   ],
   operator: [
-    "tasks_get", "tasks_update", "tasks_comment",
+    "tasks_get", "tasks_update", "tasks_comment", "mcps_list", "projects_list",
     "routines_list", "routines_create", "routines_update", "routines_delete", "routines_run",
     "reports_save", "reports_list", "reports_read", "artifacts_write", "artifacts_read", "artifacts_list", "time_now",
+    "decisions_request", "decisions_add_evidence", "decisions_get", "decisions_list", "decisions_withdraw",
   ],
 };
 

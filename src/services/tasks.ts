@@ -2,7 +2,9 @@
 // REST (/api/tasks) and MCP (/mcp/agents) both call these functions.
 
 import { type Caller, callerName, isHumanOrPrincipal, isPrincipal } from "./caller";
+import { hasApprovedDecision } from "./decisions";
 import { ServiceError } from "./errors";
+import { moveTaskToProject, requireActiveProject } from "./projects";
 
 export type TaskState = "todo" | "in_progress" | "review" | "done" | "cancelled";
 export type TaskFilter = "open" | "done" | "all";
@@ -39,6 +41,8 @@ export interface Task {
   created_at: string;
   updated_at: string;
   closed_at: string | null;
+  // 1 = can't go to review or be closed by an agent without an approved Decision (task 015).
+  requires_approval: number;
 }
 
 export interface TaskSummary extends Task {
@@ -120,6 +124,7 @@ export interface CreateTaskInput {
   parent_id?: string;
   priority?: number;
   assignee?: string;
+  requires_approval?: boolean;
 }
 
 export async function createTask(db: D1Database, caller: Caller, input: CreateTaskInput): Promise<TaskDetail> {
@@ -143,11 +148,10 @@ async function insertTask(db: D1Database, caller: Caller, input: CreateTaskInput
     );
   }
 
-  const projectId = input.project_id ?? "default";
-  const project = await db.prepare("SELECT id FROM projects WHERE id = ?").bind(projectId).first();
-  if (!project) {
-    throw new ServiceError("not_found", `Project ${projectId} not found`, "Use 'default' or an existing project id.", 404);
-  }
+  // Subtasks live in their parent's project; other tasks go to Default unless told otherwise.
+  const parentRow = input.parent_id ? await findTask(db, input.parent_id) : null;
+  const projectId = input.project_id ?? parentRow?.project_id ?? "default";
+  await requireActiveProject(db, projectId);
 
   if (input.assignee) {
     const agent = await db.prepare("SELECT status FROM agents WHERE id = ?").bind(input.assignee).first<{ status: string }>();
@@ -156,10 +160,7 @@ async function insertTask(db: D1Database, caller: Caller, input: CreateTaskInput
     }
   }
 
-  let parentId: string | null = null;
-  if (input.parent_id) {
-    parentId = (await findTask(db, input.parent_id)).id;
-  }
+  const parentId: string | null = parentRow?.id ?? null;
 
   const counter = await db
     .prepare("UPDATE counters SET value = value + 1 WHERE name = 'task' RETURNING value")
@@ -174,10 +175,23 @@ async function insertTask(db: D1Database, caller: Caller, input: CreateTaskInput
   await db.batch([
     db
       .prepare(
-        `INSERT INTO tasks (id, identifier, project_id, parent_id, title, description, priority, assignee, created_by, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (id, identifier, project_id, parent_id, title, description, priority, assignee, created_by, created_at, updated_at, requires_approval)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .bind(id, identifier, projectId, parentId, title, description, input.priority ?? null, input.assignee ?? null, callerName(caller), ts, ts),
+      .bind(
+        id,
+        identifier,
+        projectId,
+        parentId,
+        title,
+        description,
+        input.priority ?? null,
+        input.assignee ?? null,
+        callerName(caller),
+        ts,
+        ts,
+        input.requires_approval ? 1 : 0,
+      ),
     ...criteria.map((text, i) =>
       db.prepare("INSERT INTO task_criteria (task_id, position, text) VALUES (?, ?, ?)").bind(id, i + 1, text),
     ),
@@ -335,6 +349,18 @@ export interface UpdateTaskInput {
   priority?: number | null;
   state?: TaskState;
   assignee?: string | null;
+  requires_approval?: boolean;
+  project_id?: string;
+}
+
+// Agents can't move a task that requires approval forward without an approved Decision.
+async function requireApproval(db: D1Database, caller: Caller, task: Task, action: string) {
+  if (caller.kind !== "agent" || !task.requires_approval) return;
+  if (await hasApprovedDecision(db, task.id)) return;
+  throw forbidden(
+    `${task.identifier} requires an approved Decision before it can ${action}`,
+    `Request one with decisions_request (task: ${task.identifier}) and wait for it to be approved.`,
+  );
 }
 
 export async function updateTask(db: D1Database, caller: Caller, idOrIdentifier: string, input: UpdateTaskInput): Promise<TaskDetail> {
@@ -357,6 +383,7 @@ export async function updateTask(db: D1Database, caller: Caller, idOrIdentifier:
     if (n > 0) {
       throw new ServiceError("invalid_state", `${task.identifier} has ${n} open subtask(s)`, "Finish its subtasks before moving it to review.", 409);
     }
+    await requireApproval(db, caller, task, "go to review");
   }
 
   // Leads and Operators can only touch their own task: move it between in_progress and review,
@@ -365,8 +392,8 @@ export async function updateTask(db: D1Database, caller: Caller, idOrIdentifier:
     if (caller.kind !== "agent" || task.assignee !== caller.id) {
       throw forbidden("agents can only update tasks assigned to them", `${task.identifier} is assigned to ${task.assignee ?? "nobody"}.`);
     }
-    if (input.assignee !== undefined || input.priority !== undefined) {
-      throw forbidden("only the Principal or the human can reassign or reprioritize", "Comment on the task instead.");
+    if (input.assignee !== undefined || input.priority !== undefined || input.requires_approval !== undefined || input.project_id !== undefined) {
+      throw forbidden("only the Principal or the human can reassign, reprioritize, move or change approval", "Comment on the task instead.");
     }
     if (input.state === "todo") {
       throw forbidden("agents can't put their task back in the queue", "Use in_progress or review.");
@@ -380,6 +407,14 @@ export async function updateTask(db: D1Database, caller: Caller, idOrIdentifier:
   if (input.priority !== undefined) sets.push("priority = ?"), params.push(input.priority);
   if (input.state !== undefined) sets.push("state = ?"), params.push(input.state);
   if (input.assignee !== undefined) sets.push("assignee = ?"), params.push(input.assignee);
+  if (input.requires_approval !== undefined) sets.push("requires_approval = ?"), params.push(input.requires_approval ? 1 : 0);
+  // Project: the task and all its subtasks move together; a subtask follows its parent.
+  if (input.project_id !== undefined && input.project_id !== task.project_id) {
+    if (task.parent_id) {
+      throw new ServiceError("invalid_input", `${task.identifier} is a subtask`, "Subtasks stay in their parent's project: move the parent task.");
+    }
+    await moveTaskToProject(db, task.id, input.project_id);
+  }
   if (sets.length === 0) return getTask(db, task.id);
 
   sets.push("updated_at = ?");
@@ -485,6 +520,8 @@ export async function closeTask(db: D1Database, caller: Caller, idOrIdentifier: 
       409,
     );
   }
+
+  await requireApproval(db, caller, task, "be closed");
 
   // Agents (Principal, or a Lead closing a subtask) close only after every criterion is checked.
   // The human can close any time.

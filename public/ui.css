@@ -5,8 +5,11 @@
       --border: #e4e4e7; --accent: #f6821f; --ok: #16a34a; --bad: #dc2626;
     }
     @media (prefers-color-scheme: dark) {
-      :root { --bg: #0f0f12; --fg: #f4f4f5; --muted: #a1a1aa; --card: #18181d; --border: #2a2a31; --ok: #4ade80; --bad: #f87171; }
+      :root:not([data-theme="light"]) { --bg: #0f0f12; --fg: #f4f4f5; --muted: #a1a1aa; --card: #18181d; --border: #2a2a31; --ok: #4ade80; --bad: #f87171; }
     }
+    /* Theme picked in Cmd+K (theme.js) */
+    :root[data-theme="dark"] { color-scheme: dark; --bg: #0f0f12; --fg: #f4f4f5; --muted: #a1a1aa; --card: #18181d; --border: #2a2a31; --ok: #4ade80; --bad: #f87171; }
+    :root[data-theme="light"] { color-scheme: light; }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
     a { color: var(--accent); text-decoration: none; }
@@ -22,6 +25,8 @@
     .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
     .tabs button { border: 1px solid var(--border); background: var(--card); color: var(--fg); border-radius: 999px; padding: 4px 12px; font: inherit; cursor: pointer; }
     .tabs button.active { border-color: var(--accent); color: var(--accent); }
+    /* Search box at the right end of a tab row (Skills, MCPs). */
+    .tabs .filter { margin: 0 0 0 auto; width: min(260px, 45vw); padding: 4px 12px; border-radius: 999px; font-size: 14px; }
     .count { color: var(--muted); margin-left: 6px; }
     table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
     th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 14px; }

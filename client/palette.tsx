@@ -7,21 +7,36 @@ import { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 type Agent = { id: string; name: string; tier: "principal" | "lead" | "operator"; parent_id: string | null; area: string };
-type Entry = { id: string; label: string; hint: string; href: string; group: "Menus" | "Agents" | "Agent panels" | "Recent"; keywords: string[] };
+type Project = { id: string; name: string; status: string; open: number };
+type Entry = { id: string; label: string; hint: string; href: string; group: "Menus" | "Agents" | "Projects" | "Agent panels" | "Recent"; keywords: string[] };
 
 const MENUS: Array<[string, string]> = [
   ["Overview", "/"],
   ["Chat", "/chat.html"],
   ["Tasks", "/tasks.html"],
   ["Kanban", "/kanban.html"],
+  ["Decisions", "/decisions.html"],
   ["Routines", "/routines.html"],
   ["Artifacts", "/artifacts.html"],
   ["Containers", "/containers.html"],
+  ["Skills", "/skills.html"],
+  ["MCPs", "/mcps.html"],
   ["Agents", "/agents.html"],
   ["Orchestrator", "/orchestrator.html"],
+  ["Projects", "/projects.html"],
 ];
 
 const RECENT_KEY = "flaretown.palette.recent";
+
+// Theme (public/theme.js sets window.flaretownTheme before the page paints).
+type ThemeMode = "system" | "light" | "dark";
+type ThemeApi = { get(): ThemeMode; set(mode: ThemeMode): void };
+const themeApi = (): ThemeApi | undefined => (window as unknown as { flaretownTheme?: ThemeApi }).flaretownTheme;
+const THEMES: Array<[ThemeMode, string]> = [
+  ["system", "System"],
+  ["light", "Light"],
+  ["dark", "Dark"],
+];
 
 function readRecent(): string[] {
   try {
@@ -42,7 +57,7 @@ function pushRecent(id: string) {
 
 const chatHref = (agentId: string, extra = "") => `/chat.html?agent=${encodeURIComponent(agentId)}${extra}`;
 
-function buildEntries(agents: Agent[]): Entry[] {
+function buildEntries(agents: Agent[], projects: Project[]): Entry[] {
   const name = (id: string | null) => agents.find((a) => a.id === id)?.name ?? "";
   const entries: Entry[] = MENUS.map(([label, href]) => ({
     id: `menu:${href}`,
@@ -52,6 +67,16 @@ function buildEntries(agents: Agent[]): Entry[] {
     group: "Menus",
     keywords: [label],
   }));
+  for (const p of projects.filter((x) => x.status !== "archived")) {
+    entries.push({
+      id: `project:${p.id}`,
+      label: p.name,
+      hint: `Project · ${p.open} open`,
+      href: `/projects.html?project=${encodeURIComponent(p.id)}`,
+      group: "Projects",
+      keywords: [p.name, p.id, "project"],
+    });
+  }
   for (const a of agents) {
     const hint = a.tier === "principal" ? "Principal" : a.tier === "lead" ? "Lead" : `Operator · ${name(a.parent_id)}`;
     entries.push({
@@ -95,6 +120,8 @@ function Palette() {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [theme, setTheme] = useState<ThemeMode>(() => themeApi()?.get() ?? "system");
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -110,13 +137,18 @@ function Palette() {
   useEffect(() => {
     if (!open) return;
     setSearch("");
+    setTheme(themeApi()?.get() ?? "system");
     fetch("/api/agents")
       .then((r) => r.json())
       .then((d: { agents?: Agent[] }) => setAgents(d.agents ?? []))
       .catch(() => {});
+    fetch("/api/projects?status=active")
+      .then((r) => r.json())
+      .then((d: { projects?: Project[] }) => setProjects(d.projects ?? []))
+      .catch(() => {});
   }, [open]);
 
-  const entries = useMemo(() => buildEntries(agents), [agents]);
+  const entries = useMemo(() => buildEntries(agents, projects), [agents, projects]);
   const agentsOnly = search.trimStart().startsWith("@");
   const mention = useMemo(() => parseMention(search, agents), [search, agents]);
   const recent = useMemo(
@@ -131,7 +163,7 @@ function Palette() {
   };
 
   const visible = agentsOnly ? entries.filter((e) => e.group === "Agents") : entries;
-  const groups = (["Menus", "Agents", "Agent panels"] as const).filter((g) => visible.some((e) => e.group === g));
+  const groups = (["Menus", "Agents", "Projects", "Agent panels"] as const).filter((g) => visible.some((e) => e.group === g));
 
   return (
     <Command.Dialog open={open} onOpenChange={setOpen} label="Jump to">
@@ -184,6 +216,25 @@ function Palette() {
               ))}
           </Command.Group>
         ))}
+
+        {!agentsOnly && !mention?.draft && (
+          <Command.Group heading="Theme">
+            {THEMES.map(([mode, label]) => (
+              <Command.Item
+                key={`theme:${mode}`}
+                value={`theme:${mode} ${label} theme`}
+                keywords={["theme", "appearance", "mode", "color", label]}
+                onSelect={() => {
+                  themeApi()?.set(mode);
+                  setTheme(mode);
+                }}
+              >
+                <span>Theme: {label}</span>
+                <span className="ft-hint">{theme === mode ? "✓ current" : mode === "system" ? "Follow the OS" : ""}</span>
+              </Command.Item>
+            ))}
+          </Command.Group>
+        )}
       </Command.List>
       <div className="ft-footer">↑↓ to move · Enter to open · Esc to close · @ for agents</div>
     </Command.Dialog>

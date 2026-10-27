@@ -36,6 +36,9 @@
         (await fetch("/api/agents")).json(),
       ]);
       const leads = agents.filter((a) => a.tier === "lead");
+      // Archived projects can't get tasks. Preselect the page's project filter when there is one.
+      const preset = opts.project?.() || "default";
+      const active = projects.filter((p) => p.status !== "archived");
       const assigneeOptions = [
         `<option value="principal">Principal</option>`,
         ...leads.map((l) => `<optgroup label="${esc(l.name)} (Lead)">
@@ -54,7 +57,7 @@ Acceptance criteria:
           <div class="meta">First line is the title. Lines starting with <code>- [ ]</code> become acceptance criteria.</div>
 
           <label for="f-project">Project</label>
-          <select id="f-project">${projects.map((p) => `<option value="${esc(p.id)}" ${p.id === "default" ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
+          <select id="f-project">${active.map((p) => `<option value="${esc(p.id)}" ${p.id === preset ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
 
           <label for="f-assignee">Assign to</label>
           <select id="f-assignee">${assigneeOptions}</select>
@@ -65,6 +68,9 @@ Acceptance criteria:
             <button type="button" data-mode="run">Run now</button>
           </div>
           <div class="meta" id="f-mode-hint">Waits in the queue for the Orchestrator.</div>
+
+          <label style="display:flex;align-items:center;gap:8px;color:var(--fg)"><input type="checkbox" id="f-approval" style="width:auto"> Requires approval</label>
+          <div class="meta">The agent can't move it to review until a Decision on it is approved.</div>
 
           <div class="error" id="f-error"></div>
           <div class="form-actions">
@@ -100,6 +106,7 @@ Acceptance criteria:
             criteria,
             project_id: el("f-project").value,
             assignee: el("f-assignee").value,
+            requires_approval: el("f-approval").checked,
           });
           if (mode === "run") await apiCall("POST", `/api/tasks/${task.id}/run`);
           await opts.onChange();
@@ -115,11 +122,17 @@ Acceptance criteria:
     // ---- task details (SPEC-sections-view 1.3) ------------------------------------------
     async function openDetails(id) {
       opts.onSelect(id);
-      const t = await (await fetch(`/api/tasks/${encodeURIComponent(id)}`)).json();
+      const [t, { projects }] = await Promise.all([
+        (await fetch(`/api/tasks/${encodeURIComponent(id)}`)).json(),
+        (await fetch("/api/projects")).json().catch(() => ({ projects: [] })),
+      ]);
       const open = ["todo", "in_progress", "review"].includes(t.state);
+      const project = projects.find((p) => p.id === t.project_id);
+      // Only open top-level tasks move; their subtasks go with them.
+      const canMove = open && !t.parent_id;
       showPanel(`${t.identifier}`, `
         <div><strong>${esc(t.title)}</strong></div>
-        <div class="meta">${esc(t.state.replace("_", " "))} · ${esc(t.assignee || "unassigned")} · project ${esc(t.project_id)}</div>
+        <div class="meta">${esc(t.state.replace("_", " "))} · ${esc(t.assignee || "unassigned")} · project <a href="/projects.html?project=${encodeURIComponent(t.project_id)}">${esc(project?.name ?? t.project_id)}</a>${t.requires_approval ? ` · <span class="state">requires approval</span>` : ""}</div>
         <p style="white-space: pre-wrap">${esc(t.description)}</p>
 
         <label>Acceptance criteria</label>
@@ -137,6 +150,10 @@ Acceptance criteria:
         </div>` : ""}
         <div class="error" id="d-error"></div>
 
+        ${canMove ? `<label for="d-project">Project</label>
+          <select id="d-project">${projects.filter((p) => p.status !== "archived" || p.id === t.project_id).map((p) => `<option value="${esc(p.id)}" ${p.id === t.project_id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
+          ${t.subtasks?.length ? `<div class="meta">Its ${t.subtasks.length} subtask(s) move with it.</div>` : ""}` : ""}
+
         ${t.subtasks?.length ? `<label>Subtasks (${t.subtasks.filter((x) => x.state === "done").length}/${t.subtasks.length} done)</label>
           ${t.subtasks.map((x) => `<div class="comment"><a href="#" data-open="${esc(x.id)}"><span class="id">${esc(x.identifier)}</span> ${esc(x.title)}</a>
             <div class="meta">${esc(x.state.replace("_", " "))} · ${esc(x.assignee || "unassigned")} · criteria ${x.criteria_checked}/${x.criteria_total}</div></div>`).join("")}` : ""}
@@ -144,6 +161,9 @@ Acceptance criteria:
 
         <label>Reports</label>
         <div id="d-reports"><div class="meta">Loading…</div></div>
+
+        <label>Decisions</label>
+        <div id="d-decisions"><div class="meta">Loading…</div></div>
 
         <label>Comments</label>
         ${t.comments.map((c) => `<div class="comment"><div class="meta">${esc(c.author)} · ${new Date(c.created_at).toLocaleString()}</div>${esc(c.body)}</div>`).join("") || `<div class="meta">None</div>`}
@@ -161,6 +181,17 @@ Acceptance criteria:
       );
       document.querySelectorAll("[data-open]").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); openDetails(a.dataset.open); }));
       el("d-run")?.addEventListener("click", () => act(() => apiCall("POST", `/api/tasks/${id}/run`)));
+      el("d-project")?.addEventListener("change", (e) => act(() => apiCall("PATCH", `/api/tasks/${id}`, { project_id: e.target.value })));
+
+      // Decisions linked to the task (task 015).
+      fetch(`/api/decisions?status=all&task=${encodeURIComponent(t.identifier)}`).then((r) => r.json()).then(({ decisions }) => {
+        const box = el("d-decisions");
+        if (!box) return;
+        box.innerHTML = decisions?.length
+          ? decisions.map((d) => `<div class="comment"><a href="/decisions.html?status=all&decision=${encodeURIComponent(d.identifier)}"><span class="id">${esc(d.identifier)}</span> ${esc(d.title)}</a>
+              <div class="meta">${esc(d.status)}${d.decided_by ? ` by ${esc(d.decided_by)}` : ""} · ${esc(d.requested_by)}</div></div>`).join("")
+          : `<div class="meta">None${t.requires_approval ? ": an approved Decision is needed before review" : ""}</div>`;
+      }).catch(() => {});
 
       // Reports saved on the task (R2). Click to read.
       fetch(`/api/tasks/${encodeURIComponent(id)}/reports`).then((r) => r.json()).then(({ reports }) => {

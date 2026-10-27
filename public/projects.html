@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flaretown · Projects</title>
+  <link rel="stylesheet" href="/ui.css">
+  <style>
+    .inner.wide { max-width: 1200px; }
+    .desc { color: var(--muted); font-size: 13px; }
+    .pill { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+    .pill.default { color: var(--accent); border-color: var(--accent); }
+    td.num { font-variant-numeric: tabular-nums; }
+    tbody tr[data-id] { cursor: pointer; }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 10px 0; }
+    .stats a { display: block; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--fg); background: var(--bg); }
+    .stats a:hover { border-color: var(--accent); }
+    .stats b { display: block; font-size: 18px; }
+    .stats span { font-size: 12px; color: var(--muted); }
+    .links { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0 4px; }
+  </style>
+  <script src="/theme.js"></script>
+  <script src="/nav.js" defer></script>
+</head>
+<body>
+  <div class="layout">
+    <main>
+      <div class="inner wide">
+        <header>
+          <h1>Projects</h1>
+          <div class="actions"><button class="primary" id="new-project">+ New project</button></div>
+        </header>
+        <div class="tabs">
+          <button data-status="active">Active<span class="count" id="c-active"></span></button>
+          <button data-status="archived">Archived<span class="count" id="c-archived"></span></button>
+          <input type="search" class="filter" id="q" placeholder="Filter projects…" aria-label="Filter projects">
+        </div>
+        <div class="error" id="error"></div>
+        <div id="list"><div class="empty">Loading…</div></div>
+      </div>
+    </main>
+    <aside id="panel" hidden>
+      <div class="head">
+        <h2 id="panel-title"></h2>
+        <button class="close-panel" id="close-panel" aria-label="Close panel">×</button>
+      </div>
+      <div id="panel-body"></div>
+    </aside>
+  </div>
+
+  <script>
+    const el = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+    const when = (iso) => (iso ? new Date(iso).toLocaleString() : "—");
+    const params = new URLSearchParams(location.search);
+    let status = params.get("status") === "archived" ? "archived" : "active";
+    let selected = params.get("project");
+    let query = "";
+    let projects = [];
+    let leads = [];
+
+    async function api(method, url, body) {
+      const res = await fetch(url, { method, headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined });
+      const out = await res.json();
+      if (!res.ok) throw new Error(`${out.error}${out.hint ? ` (${out.hint})` : ""}`);
+      return out;
+    }
+
+    function setUrl() {
+      const u = new URL(location.href);
+      status === "active" ? u.searchParams.delete("status") : u.searchParams.set("status", status);
+      selected ? u.searchParams.set("project", selected) : u.searchParams.delete("project");
+      history.replaceState(null, "", u);
+    }
+    function showPanel(title, html) {
+      el("panel-title").textContent = title;
+      el("panel-body").innerHTML = html;
+      el("panel").hidden = false;
+    }
+    function closePanel() {
+      el("panel").hidden = true;
+      selected = null;
+      setUrl();
+      render();
+    }
+    el("close-panel").addEventListener("click", closePanel);
+
+    // ---- list -----------------------------------------------------------------------------
+    function render() {
+      document.querySelectorAll(".tabs [data-status]").forEach((b) => b.classList.toggle("active", b.dataset.status === status));
+      el("c-active").textContent = projects.filter((p) => p.status === "active").length;
+      el("c-archived").textContent = projects.filter((p) => p.status === "archived").length || "";
+      const shown = projects.filter((p) => p.status === status &&
+        (!query || [p.name, p.id, p.description, p.owner_name].some((f) => String(f ?? "").toLowerCase().includes(query))));
+      if (!shown.length) {
+        el("list").innerHTML = `<div class="empty">${query ? `No projects match “${esc(query)}”.` : status === "archived" ? "No archived projects." : "No projects."}</div>`;
+        return;
+      }
+      el("list").innerHTML = `<table><thead><tr><th>Project</th><th>Owner</th><th>Open</th><th>In review</th><th>Done (7 days)</th><th>Updated</th></tr></thead><tbody>${
+        shown.map((p) => `<tr data-id="${esc(p.id)}" class="${p.id === selected ? "selected" : ""}">
+          <td><strong>${esc(p.name)}</strong> ${p.id === "default" ? `<span class="pill default">default</span>` : ""}<div class="desc">${esc(p.description)}</div></td>
+          <td class="meta">${esc(p.owner_name ?? "—")}</td>
+          <td class="num">${p.open}</td>
+          <td class="num">${p.in_review}</td>
+          <td class="num">${p.done_7d}</td>
+          <td class="meta">${when(p.updated_at)}</td>
+        </tr>`).join("")
+      }</tbody></table>`;
+      el("list").querySelectorAll("tr[data-id]").forEach((tr) => tr.addEventListener("click", () => openProject(tr.dataset.id)));
+    }
+
+    // ---- panel ----------------------------------------------------------------------------
+    function form(p) {
+      return `
+        <form id="p-form">
+          <label for="p-name">Name</label>
+          <input id="p-name" required maxlength="80" placeholder="e.g. Website relaunch" value="${esc(p?.name ?? "")}">
+          <label for="p-desc">Description</label>
+          <textarea id="p-desc" rows="3" placeholder="What this project is about. Agents read it when they pick a project for a task.">${esc(p?.description ?? "")}</textarea>
+          <label for="p-owner">Owner</label>
+          <select id="p-owner"><option value="">No owner</option>${leads.map((l) => `<option value="${esc(l.id)}" ${p?.owner_id === l.id ? "selected" : ""}>${esc(l.name)} (Lead)</option>`).join("")}</select>
+          <div class="meta">Optional: the Lead responsible for it.</div>
+          <label for="p-repo">Repository</label>
+          <input id="p-repo" type="url" placeholder="https://github.com/acme/website (optional)" value="${esc(p?.repo_url ?? "")}">
+          <div class="form-actions"><button class="primary" type="submit">${p ? "Save" : "Create project"}</button></div>
+          <div class="error" id="p-error"></div>
+        </form>`;
+    }
+    const formBody = () => ({
+      name: el("p-name").value,
+      description: el("p-desc").value,
+      owner_id: el("p-owner").value || null,
+      repo_url: el("p-repo").value.trim() || null,
+    });
+
+    function openNew() {
+      selected = null;
+      setUrl();
+      render();
+      showPanel("New project", form(null));
+      el("p-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        try {
+          const p = await api("POST", "/api/projects", formBody());
+          await load();
+          openProject(p.id);
+        } catch (err) { el("p-error").textContent = err.message; }
+      });
+    }
+    el("new-project").addEventListener("click", openNew);
+
+    async function openProject(id) {
+      selected = id;
+      setUrl();
+      render();
+      let p;
+      try { p = await api("GET", `/api/projects/${encodeURIComponent(id)}`); }
+      catch (err) { showPanel(id, `<div class="error">${esc(err.message)}</div>`); return; }
+      const tasksLink = (filter) => `/tasks.html?filter=${filter}&project=${encodeURIComponent(p.id)}`;
+      showPanel(p.name, `
+        <div class="meta">${esc(p.id)} · created by ${esc(p.created_by)} ${when(p.created_at)}${p.status === "archived" ? ` · <span class="pill">archived</span>` : ""}</div>
+        ${p.repo_url ? `<div class="meta"><a href="${esc(p.repo_url)}" target="_blank" rel="noopener">${esc(p.repo_url)}</a></div>` : ""}
+        <div class="stats">
+          <a href="${tasksLink("open")}"><b>${p.open}</b><span>open</span></a>
+          <a href="${tasksLink("open")}"><b>${p.in_review}</b><span>in review</span></a>
+          <a href="${tasksLink("done")}"><b>${p.done_7d}</b><span>done, 7 days</span></a>
+        </div>
+        <div class="links">
+          <a class="ghost" href="${tasksLink("all")}">Tasks</a>
+          <a class="ghost" href="/kanban.html?project_id=${encodeURIComponent(p.id)}">Kanban</a>
+        </div>
+        ${form(p)}
+        <div class="form-actions">
+          ${p.id === "default" ? `<span class="meta">Default can be renamed, but not archived or deleted.</span>`
+            : p.status === "active" ? `<button class="ghost" id="p-archive">Archive</button>`
+            : `<button class="ghost" id="p-unarchive">Unarchive</button>`}
+          ${p.id !== "default" && p.total === 0 ? `<button class="ghost danger" id="p-delete">Delete</button>` : ""}
+        </div>
+        ${p.id !== "default" && p.status === "active" ? `<div class="meta">Archived projects keep their tasks but can't get new ones.</div>` : ""}
+        <div class="error" id="p-error2"></div>`);
+      el("p-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        try { await api("PATCH", `/api/projects/${p.id}`, formBody()); await load(); openProject(p.id); }
+        catch (err) { el("p-error").textContent = err.message; }
+      });
+      const run = async (fn) => {
+        try { await fn(); await load(); } catch (err) { el("p-error2").textContent = err.message; }
+      };
+      el("p-archive")?.addEventListener("click", () => run(async () => { await api("POST", `/api/projects/${p.id}/archive`); status = "archived"; openProject(p.id); }));
+      el("p-unarchive")?.addEventListener("click", () => run(async () => { await api("POST", `/api/projects/${p.id}/unarchive`); status = "active"; openProject(p.id); }));
+      el("p-delete")?.addEventListener("click", () => {
+        if (!confirm(`Delete ${p.name}?`)) return;
+        run(async () => { await api("DELETE", `/api/projects/${p.id}`); closePanel(); });
+      });
+    }
+
+    async function load() {
+      const [d, a] = await Promise.all([api("GET", "/api/projects"), api("GET", "/api/agents")]);
+      projects = d.projects;
+      leads = (a.agents ?? []).filter((x) => x.tier === "lead");
+      render();
+    }
+
+    document.querySelectorAll(".tabs [data-status]").forEach((b) => b.addEventListener("click", () => {
+      status = b.dataset.status;
+      setUrl();
+      render();
+    }));
+    el("q").addEventListener("input", () => { query = el("q").value.trim().toLowerCase(); render(); });
+
+    load()
+      .then(() => {
+        const p = selected && projects.find((x) => x.id === selected);
+        if (p) { status = p.status; render(); openProject(p.id); }
+      })
+      .catch((err) => (el("list").innerHTML = `<div class="empty error">${esc(err.message)}</div>`));
+  </script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+# Worker secrets. The Deploy to Cloudflare button asks for these; for a manual deploy use
+# `pnpm wrangler secret put <NAME>`. For `wrangler dev`, copy this file to .dev.vars.
+
+# Encrypts the secrets you add for MCP servers (tokens, API keys). Generate it with
+# `openssl rand -base64 32` and keep a copy: if you lose it, those secrets can't be recovered.
+FLARETOWN_SECRETS_KEY=

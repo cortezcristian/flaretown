@@ -14,10 +14,19 @@ export interface OrchestratorSettings {
   sandbox_max_principal: number;
   sandbox_max_leads: number;
   sandbox_max_operators: number;
+  // Agent limits: active Leads, and active Operators under each Lead.
+  agents_max_leads: number;
+  agents_max_operators_per_lead: number;
 }
 
-// Upper bounds = the most agents a tier can have (1 Principal, MAX_LEADS, MAX_LEADS x MAX_OPERATORS_PER_LEAD).
-export const SANDBOX_MAX_BOUNDS = { principal: 1, lead: 5, operator: 25 } as const;
+// Agent limits: defaults and the range the UI accepts.
+export const AGENT_LIMIT_DEFAULTS = { leads: 5, operators_per_lead: 5 } as const;
+export const AGENT_LIMIT_MAX = 50;
+
+// Sandbox upper bounds = the most agents a tier can have (1 Principal, max Leads, max Leads x max Operators per Lead).
+export function sandboxMaxBounds(s: Pick<OrchestratorSettings, "agents_max_leads" | "agents_max_operators_per_lead">) {
+  return { principal: 1, lead: s.agents_max_leads, operator: s.agents_max_leads * s.agents_max_operators_per_lead };
+}
 
 export const POLL_MIN_S = 30;
 export const POLL_MAX_S = 3600;
@@ -39,6 +48,8 @@ export async function getOrchestratorSettings(db: D1Database): Promise<Orchestra
     sandbox_max_principal: Number(s.sandbox_max_principal ?? 1),
     sandbox_max_leads: Number(s.sandbox_max_leads ?? 2),
     sandbox_max_operators: Number(s.sandbox_max_operators ?? 3),
+    agents_max_leads: Number(s.agents_max_leads ?? AGENT_LIMIT_DEFAULTS.leads),
+    agents_max_operators_per_lead: Number(s.agents_max_operators_per_lead ?? AGENT_LIMIT_DEFAULTS.operators_per_lead),
   };
 }
 
@@ -53,10 +64,20 @@ export async function updateOrchestratorSettings(db: D1Database, input: Partial<
   if (!Number.isInteger(next.stall_timeout_min) || next.stall_timeout_min < 1 || next.stall_timeout_min > 1440) {
     throw new ServiceError("invalid_input", "Stall timeout out of range", "Use 1 to 1440 minutes.");
   }
+  for (const [key, label] of [
+    ["agents_max_leads", "Max Leads"],
+    ["agents_max_operators_per_lead", "Max Operators per Lead"],
+  ] as const) {
+    const v = next[key];
+    if (!Number.isInteger(v) || v < 1 || v > AGENT_LIMIT_MAX) {
+      throw new ServiceError("invalid_input", `${label} out of range`, `Use 1 to ${AGENT_LIMIT_MAX}. Lowering it doesn't retire agents, it only blocks new ones.`);
+    }
+  }
+  const bounds = sandboxMaxBounds(next);
   for (const [key, max] of [
-    ["sandbox_max_principal", SANDBOX_MAX_BOUNDS.principal],
-    ["sandbox_max_leads", SANDBOX_MAX_BOUNDS.lead],
-    ["sandbox_max_operators", SANDBOX_MAX_BOUNDS.operator],
+    ["sandbox_max_principal", bounds.principal],
+    ["sandbox_max_leads", bounds.lead],
+    ["sandbox_max_operators", bounds.operator],
   ] as const) {
     const v = next[key];
     if (!Number.isInteger(v) || v < 0 || v > max) {
@@ -75,6 +96,8 @@ export async function updateOrchestratorSettings(db: D1Database, input: Partial<
     put("sandbox_max_principal", String(next.sandbox_max_principal)),
     put("sandbox_max_leads", String(next.sandbox_max_leads)),
     put("sandbox_max_operators", String(next.sandbox_max_operators)),
+    put("agents_max_leads", String(next.agents_max_leads)),
+    put("agents_max_operators_per_lead", String(next.agents_max_operators_per_lead)),
   ]);
   return next;
 }

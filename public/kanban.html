@@ -40,6 +40,7 @@
     @keyframes fadein { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
   </style>
+  <script src="/theme.js"></script>
   <script src="/nav.js" defer></script>
 </head>
 <body>
@@ -114,7 +115,7 @@
       const back = c.sent_back ? `<span class="chip back">sent back</span>` : "";
       return `<div class="card ${c.parent_id ? "sub" : ""} ${c.working ? "working" : ""} ${c.id === selectedId ? "selected" : ""} ${fresh ? "fade-in" : ""}"
           draggable="true" data-id="${esc(c.id)}" data-state="${esc(c.state)}">
-        <div class="card-top"><span class="id">${c.parent_id ? "↳ " : ""}${esc(c.identifier)}${c.priority ? ` · P${c.priority}` : ""}</span><span>${esc(c.project_id === "default" ? "Default" : c.project_id)}</span></div>
+        <div class="card-top"><span class="id">${c.parent_id ? "↳ " : ""}${esc(c.identifier)}${c.priority ? ` · P${c.priority}` : ""}</span><span>${esc(projectNames.get(c.project_id) ?? c.project_id)}</span></div>
         <div class="card-title">${esc(c.title)}</div>
         <div class="chips">${crit}${subs}${back}</div>
         <div class="card-foot">
@@ -205,6 +206,7 @@
     }
 
     TaskPanel.init({
+      project: () => el("f-project").value,
       onChange: () => load(),
       onSelect: (id) => {
         selectedId = id;
@@ -212,10 +214,14 @@
       },
     });
 
+    let projectNames = new Map();
     async function init() {
       const [{ projects }, a] = await Promise.all([(await fetch("/api/projects")).json(), (await fetch("/api/agents")).json()]);
       agents = a.agents ?? [];
-      el("f-project").innerHTML += projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+      projectNames = new Map(projects.map((p) => [p.id, p.name]));
+      el("f-project").innerHTML += projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}${p.status === "archived" ? " (archived)" : ""}</option>`).join("");
+      const preset = new URLSearchParams(location.search).get("project_id");
+      if (preset && projectNames.has(preset)) el("f-project").value = preset;
       const leads = agents.filter((x) => x.tier === "lead");
       el("f-agent").innerHTML += [
         `<option value="agent:principal">Principal</option>`,

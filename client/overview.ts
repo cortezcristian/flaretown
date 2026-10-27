@@ -15,7 +15,7 @@ type Agent = {
   open_tasks: number;
 };
 type Overview = {
-  counts: { agents: number; working: number; projects: number; open_tasks: number; review: number };
+  counts: { agents: number; working: number; projects: number; projects_open: number; open_tasks: number; review: number };
   agents: Agent[];
 };
 type Event = { at: string; kind: string; identifier: string; title: string; actor: string | null; detail: string | null };
@@ -109,6 +109,7 @@ function renderCounters() {
   $("c-agents").textContent = String(c.agents);
   $("c-working").textContent = c.working ? `${c.working} working` : "all idle";
   $("c-projects").textContent = String(c.projects);
+  $("c-projects-sub").textContent = c.projects_open ? `${c.projects_open} with open tasks` : "no open tasks";
   $("c-open").textContent = String(c.open_tasks);
   $("c-review").textContent = String(c.review);
 }
@@ -262,6 +263,7 @@ async function main() {
     if (e.key === "Escape" && !$("panel").hidden) setPanelOpen(false);
   });
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => renderChart());
+  window.addEventListener("ft-theme", () => renderChart()); // theme picked in Cmd+K
 
   try {
     const { models } = await (await fetch("/api/models")).json();

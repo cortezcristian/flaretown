@@ -18,6 +18,7 @@ https://github.com/user-attachments/assets/915613da-56fa-4be6-b1a4-0a8990c9b474
 - **Tasks, Kanban and Routines.** Give work to any agent, watch it move across the board, or schedule it ("every weekday at 8am").
 - **Code Mode.** Agents write JavaScript that runs in a sandboxed Dynamic Worker and calls their own tools.
 - **A computer per agent.** Optional Linux container: a Debian shell, or a desktop with Chromium you can watch and drive live (noVNC) right next to the chat. The browser login survives restarts.
+- **MCP servers per agent.** Cloudflare's own MCP servers are ready to attach, and you can add any remote MCP server (or import your editor's `mcpServers` JSON). Each agent only gets the servers you give it; tokens are stored encrypted and agents never see them.
 - **Git for every agent.** Each agent writes its reports and files to its own Cloudflare Artifacts repo, with history and retention.
 - **Private by default.** The whole app sits behind Cloudflare Access: only the emails you allow get in.
 
@@ -43,6 +44,7 @@ Create the Access policy and application **before** you deploy, so the app is ne
 Click **Deploy to Cloudflare** above. On the setup page:
 
 - **Worker name** must match the domain from step 1. Trying it next to an existing install? Use something like `flaretown-v1` and give the databases and bucket new names too.
+- **FLARETOWN_SECRETS_KEY**: generate it with `openssl rand -base64 32` and paste it. It encrypts the tokens you add for MCP servers. Keep a copy in your password manager: if it's lost, those tokens have to be entered again. You can leave it empty and add it later.
 - Cloudflare forks the repo into your GitHub, creates the D1 databases, the R2 bucket and the Durable Objects, builds and deploys. The deploy step also runs the database migrations.
 
 ### 3. Open it
@@ -70,9 +72,20 @@ Containers stop after 10 minutes idle, and you can cap how many run per tier in 
 pnpm install
 pnpm wrangler login
 pnpm run deploy        # deploys and applies the D1 migrations
+openssl rand -base64 32 | pnpm wrangler secret put FLARETOWN_SECRETS_KEY   # for MCP secrets; keep a copy
 ```
 
 Needs Node.js 22.18+, pnpm, and Docker running (the desktop container image is built at deploy). Protect the Worker with Access first (step 1).
+
+No Docker, or only Worker code changed? `pnpm run deploy:no-containers` deploys the Worker and leaves container images and running containers as they are.
+
+## MCP secrets and the key
+
+Tokens for MCP servers (for example `GITHUB_TOKEN`) go in **MCPs → Secrets**. They're encrypted with `FLARETOWN_SECRETS_KEY` and can't be read back by anyone, agents included; server headers refer to them as `${GITHUB_TOKEN}`.
+
+- **No key set:** everything works except saving secrets. MCP servers without auth or with OAuth sign-in still work.
+- **Lost key:** set a new one and enter the secrets again.
+- **Rotate:** set the old key as `FLARETOWN_SECRETS_KEY_PREVIOUS`, the new one as `FLARETOWN_SECRETS_KEY`, click **Re-encrypt all** in Secrets, then delete the previous one.
 
 ## Remove everything
 

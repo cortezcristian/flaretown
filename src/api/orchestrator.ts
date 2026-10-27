@@ -37,6 +37,8 @@ export async function handleOrchestratorApi(request: Request, env: Env, pathname
         "sandbox_max_principal",
         "sandbox_max_leads",
         "sandbox_max_operators",
+        "agents_max_leads",
+        "agents_max_operators_per_lead",
       ]) {
         if (body[k] !== undefined) patch[k] = Number(body[k]);
       }

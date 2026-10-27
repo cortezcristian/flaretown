@@ -36,6 +36,7 @@
     td .ghost { padding: 3px 10px; font-size: 13px; }
     @media (max-width: 800px) { .browser { grid-template-columns: 1fr; } }
   </style>
+  <script src="/theme.js"></script>
   <script src="/nav.js" defer></script>
 </head>
 <body>
@@ -50,6 +51,7 @@
           <button data-tab="files">Files</button>
           <button data-tab="tasks">Tasks<span class="count" id="c-tasks"></span></button>
           <button data-tab="history">History</button>
+          <button data-tab="skills">Skills<span class="count" id="c-skills"></span></button>
         </div>
         <div id="content"><div class="empty">Loading…</div></div>
       </div>
@@ -171,7 +173,9 @@
       }
       el("title").textContent = agentName;
       api("GET", `/api/artifacts/${agent}/tasks`).then((d) => (el("c-tasks").textContent = d.tasks.length || "")).catch(() => {});
+      api("GET", `/api/agents/${agent}/skills`).then((d) => (el("c-skills").textContent = d.skills.filter((x) => x.active).length || "")).catch(() => {});
       if (tab === "tasks") return showTasks(agent);
+      if (tab === "skills") return showSkills(agent, params().get("skill"));
       if (tab === "history") return params().get("commit") ? showCommit(agent, params().get("commit")) : showHistory(agent);
       return showFiles(agent, params().get("path") || "", params().get("file"));
     }
@@ -286,6 +290,38 @@
         };
         tr.addEventListener("click", () => nav({ agent, path: `tasks/${t.identifier}` }));
       });
+    }
+
+    // ---- skills (task 017): what this agent can use; read each SKILL.md ----------------------
+    async function showSkills(agent, open) {
+      const { skills } = await api("GET", `/api/agents/${agent}/skills`);
+      if (!skills.length) { el("content").innerHTML = `<div class="empty">No skills installed. <a href="/skills.html">Add skills</a></div>`; return; }
+      const active = skills.filter((x) => x.active);
+      const current = skills.find((x) => x.name === open) ?? active[0] ?? skills[0];
+      el("content").innerHTML = `
+        <p class="meta">Checked skills are this agent's: it sees their names and descriptions and loads one when a task matches. All-agents skills can't be unchecked here. <a href="/skills.html">Manage skills</a></p>
+        <div class="browser">
+          <div class="tree">${skills.map((x) => `<a data-skill="${esc(x.name)}" class="${x.name === current.name ? "active" : ""}" title="${esc(x.description)}">
+            <input type="checkbox" data-toggle="${esc(x.name)}" ${x.active ? "checked" : ""} ${x.all_agents ? "disabled" : ""} style="width:auto;margin:0">
+            <span>${esc(x.name)}${x.all_agents ? ` <span class="meta">all agents</span>` : ""}</span></a>`).join("")}</div>
+          <div class="viewer" id="skill-view"><div class="empty">Loading…</div></div>
+        </div><div class="error" id="err"></div>`;
+      el("content").querySelectorAll("[data-skill]").forEach((a) => a.addEventListener("click", (e) => {
+        if (e.target.matches("input")) return;
+        nav({ agent, tab: "skills", skill: a.dataset.skill });
+      }));
+      el("content").querySelectorAll("[data-toggle]").forEach((box) => box.addEventListener("change", async () => {
+        const names = skills.filter((x) => x.assigned && x.name !== box.dataset.toggle).map((x) => x.name);
+        if (box.checked) names.push(box.dataset.toggle);
+        try { await api("PUT", `/api/agents/${agent}/skills`, { skills: names }); showSkills(agent, current.name); }
+        catch (err) { el("err").textContent = err.message; box.checked = !box.checked; }
+      }));
+      try {
+        const d = await api("GET", `/api/skills/${encodeURIComponent(current.name)}`);
+        el("skill-view").innerHTML = `<div class="bar"><span>${esc(d.name)} · ${esc(d.source)}${d.version ? ` · v${esc(d.version)}` : ""} · ${d.files.length} file(s)</span>
+          <a href="/skills.html?skill=${encodeURIComponent(d.name)}">Open in Skills</a></div>
+          <div class="md">${markdown(d.skill_md.replace(/^---\n[\s\S]*?\n---\n/, ""))}</div>`;
+      } catch (err) { el("skill-view").innerHTML = `<div class="error">${esc(err.message)}</div>`; }
     }
 
     async function route() {

@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flaretown · Decisions</title>
+  <link rel="stylesheet" href="/ui.css">
+  <style>
+    .inner.wide { max-width: 1200px; }
+    .banner { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 10px; margin-bottom: 12px; font-size: 14px;
+      background: color-mix(in srgb, var(--accent) 8%, var(--card)); border: 1px solid var(--border); }
+    .banner b { color: var(--accent); }
+    .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .toolbar .tabs { margin: 0; }
+    .toolbar select { width: auto; padding: 4px 8px; }
+    .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .seg button { border: 0; background: var(--card); color: var(--fg); padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+    .seg button.active { background: var(--accent); color: #fff; }
+    .pill { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+    .s-pending { color: var(--accent); border-color: var(--accent); }
+    .s-approved { color: var(--ok); border-color: var(--ok); }
+    .s-rejected { color: var(--bad); border-color: var(--bad); }
+    .s-withdrawn { color: var(--muted); }
+    .q { font-size: 12px; white-space: nowrap; }
+    .q-do_now { color: var(--bad); } .q-plan { color: var(--accent); } .q-quick_call { color: #2563eb; } .q-later { color: var(--muted); }
+    td .ghost, td .primary { padding: 3px 10px; font-size: 13px; }
+    .row-actions { display: flex; gap: 6px; }
+    .meter { display: inline-block; width: 46px; height: 6px; border-radius: 3px; background: var(--border); vertical-align: middle; overflow: hidden; }
+    .meter i { display: block; height: 100%; background: var(--accent); }
+    .matrix-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+    .matrix-wrap svg { width: 100%; max-width: 720px; display: block; margin: 0 auto; }
+    .legend { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; font-size: 12px; color: var(--muted); margin-top: 8px; }
+    .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; background: var(--c); border: 2px solid var(--r, transparent); }
+    .unevaluated { margin-top: 10px; font-size: 13px; color: var(--muted); }
+    .unevaluated a { cursor: pointer; margin-right: 8px; }
+    .dot { cursor: pointer; }
+    .dot:hover { opacity: .8; }
+    .md h1, .md h2, .md h3 { font-size: 14px; margin: 12px 0 4px; text-transform: none; }
+    .md p { margin: 4px 0; } .md ul, .md ol { margin: 4px 0; padding-left: 20px; }
+    .md code { font-family: ui-monospace, monospace; font-size: 12px; background: var(--bg); padding: 1px 4px; border-radius: 4px; }
+    .md pre { background: var(--bg); padding: 8px; border-radius: 6px; overflow: auto; }
+    .warn { font-size: 13px; padding: 6px 10px; border-radius: 8px; margin: 8px 0; background: color-mix(in srgb, var(--accent) 12%, transparent); }
+    .evidence { list-style: none; padding: 0; margin: 0; }
+    .evidence li { border-top: 1px solid var(--border); padding: 6px 0; font-size: 14px; }
+    .evidence pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); padding: 6px; border-radius: 6px; font-size: 12px; max-height: 200px; overflow: auto; margin: 4px 0 0; }
+    .bar { display: grid; grid-template-columns: 90px 1fr 76px; gap: 8px; align-items: center; font-size: 13px; margin: 3px 0; }
+    .bar .track { height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; }
+    .bar .track i { display: block; height: 100%; background: var(--accent); }
+    .bar .v { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .crit { display: flex; gap: 8px; font-size: 13px; padding: 2px 0; }
+    .crit .p { margin-left: auto; color: var(--muted); }
+    .history { font-size: 12px; color: var(--muted); }
+    .history li { margin: 2px 0; }
+    .actions-box { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 8px; }
+    .actions-box .form-actions { flex-wrap: wrap; }
+    .range-row { display: flex; gap: 10px; align-items: center; }
+    .range-row input[type=range] { flex: 1; }
+    .range-row input[type=number] { width: 80px; }
+    .check { display: flex; align-items: center; gap: 8px; color: var(--fg); }
+    .check input { width: auto; }
+    .help { font-size: 13px; color: var(--muted); margin: 6px 0; }
+    tbody tr { cursor: pointer; }
+  </style>
+  <script src="/theme.js"></script>
+  <script src="/nav.js" defer></script>
+</head>
+<body>
+  <div class="layout">
+    <main>
+      <div class="inner wide">
+        <header>
+          <h1>Decisions</h1>
+          <div class="actions"><button class="ghost" id="open-config">Configuration</button></div>
+        </header>
+        <div class="banner" id="banner">Loading…</div>
+        <div class="toolbar">
+          <div class="tabs" id="tabs">
+            <button data-status="pending">Pending<span class="count" id="c-pending"></span></button>
+            <button data-status="approved">Approved<span class="count" id="c-approved"></span></button>
+            <button data-status="rejected">Rejected<span class="count" id="c-rejected"></span></button>
+            <button data-status="all">All<span class="count" id="c-all"></span></button>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="decided-by" title="Decided by">
+              <option value="">Decided by anyone</option>
+              <option value="human">Decided by the human</option>
+              <option value="clef">Decided by Clef</option>
+            </select>
+            <div class="seg" id="view">
+              <button data-view="list">List</button>
+              <button data-view="matrix">Matrix</button>
+            </div>
+          </div>
+        </div>
+        <div class="error" id="error"></div>
+        <div id="content"><div class="empty">Loading…</div></div>
+      </div>
+    </main>
+    <aside id="panel" hidden>
+      <div class="head">
+        <h2 id="panel-title"></h2>
+        <button class="close-panel" id="close-panel" aria-label="Close panel">×</button>
+      </div>
+      <div id="panel-body"></div>
+    </aside>
+  </div>
+
+  <script>
+    const el = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+    const when = (iso) => (iso ? new Date(iso).toLocaleString() : "—");
+    const params = new URLSearchParams(location.search);
+    let status = params.get("status") || "pending";
+    let decidedBy = "";
+    let view = "list";
+    try { view = localStorage.getItem("flaretown.decisions.view") || "list"; } catch { /* default */ }
+    let data = null;
+    let selected = params.get("decision");
+    let panelMode = null; // "detail" | "config"
+
+    const MODEL_LABEL = { clef: "Clef", "clef-flash": "Clef Flash", off: "no model" };
+    const QUADRANT = { do_now: "Do now", plan: "Plan", quick_call: "Quick call", later: "Later" };
+    const LEVELS = {
+      urgency: ["not urgent", "can wait", "soon", "now"],
+      importance: ["trivial", "minor", "significant", "critical"],
+      risk: ["low", "medium", "high", "critical"],
+      evidence: ["missing", "weak", "adequate", "strong"],
+    };
+    const level = (k, v) => (v === null || v === undefined ? "—" : LEVELS[k][Math.max(0, Math.min(3, Math.round(v)))]);
+    const CRITICAL_RISK = 2.5;
+
+    async function api(method, url, body) {
+      const res = await fetch(url, { method, headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined });
+      const out = await res.json();
+      if (!res.ok) throw new Error(`${out.error}${out.hint ? ` (${out.hint})` : ""}`);
+      return out;
+    }
+
+    // ---- tiny Markdown renderer (escaped first; no raw HTML) -------------------------------
+    function inline(s) {
+      return s
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+        .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+|\/[^)\s]*)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    }
+    function markdown(src) {
+      const lines = esc(src).split("\n");
+      let out = "", list = null, code = false, para = [];
+      const flush = () => { if (para.length) { out += `<p>${inline(para.join(" "))}</p>`; para = []; } };
+      const closeList = () => { if (list) { out += `</${list}>`; list = null; } };
+      for (const line of lines) {
+        if (line.startsWith("```")) { flush(); closeList(); out += code ? "</code></pre>" : "<pre><code>"; code = !code; continue; }
+        if (code) { out += line + "\n"; continue; }
+        let m;
+        if ((m = line.match(/^(#{1,6})\s+(.*)/))) { flush(); closeList(); out += `<h3>${inline(m[2])}</h3>`; }
+        else if ((m = line.match(/^\s*[-*]\s+(.*)/))) { flush(); if (list !== "ul") { closeList(); out += "<ul>"; list = "ul"; } out += `<li>${inline(m[1])}</li>`; }
+        else if ((m = line.match(/^\s*\d+[.)]\s+(.*)/))) { flush(); if (list !== "ol") { closeList(); out += "<ol>"; list = "ol"; } out += `<li>${inline(m[1])}</li>`; }
+        else if (!line.trim()) { flush(); closeList(); }
+        else para.push(line);
+      }
+      flush(); closeList(); if (code) out += "</code></pre>";
+      return out;
+    }
+
+    // ---- banner, tabs, toolbar -------------------------------------------------------------
+    function renderBanner(s) {
+      const model = MODEL_LABEL[s.model];
+      el("banner").innerHTML = s.mode === "system_one"
+        ? `<b>System One</b> ${esc(model)} decides when it's at least ${Math.round(s.threshold * 100)}% confident${s.auto_reject ? " (approves and rejects)" : " (approves only)"}; critical risk always waits for you.`
+        : `<b>Manual</b> You decide.${s.model === "off" ? " Clef is off." : ` ${esc(model)} ranks and recommends.`}`;
+    }
+
+    function renderToolbar() {
+      document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.status === status));
+      document.querySelectorAll("#view button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
+      for (const k of ["pending", "approved", "rejected", "all"]) el(`c-${k}`).textContent = data?.counts?.[k] ?? "";
+      el("decided-by").value = decidedBy;
+      el("decided-by").hidden = status === "pending";
+    }
+
+    // ---- list ------------------------------------------------------------------------------
+    const pct = (v) => (v === null || v === undefined ? "—" : `${Math.round(v * 100)}%`);
+    const meter = (v) => (v === null || v === undefined ? "—" : `<span class="meter" title="${esc(level("evidence", v))}"><i style="width:${Math.round((v / 3) * 100)}%"></i></span>`);
+
+    function unsureNote(d) {
+      const s = data.settings;
+      if (d.status !== "pending" || !d.eval_recommendation || s.mode !== "system_one") return "";
+      if (d.eval_recommendation === "approve" && d.eval_risk >= CRITICAL_RISK) return "critical risk: needs you";
+      if (d.eval_confidence < s.threshold) return `Clef unsure (${d.eval_confidence.toFixed(2)})`;
+      if (d.eval_recommendation === "reject" && !s.auto_reject) return "Clef would reject";
+      return "";
+    }
+
+    function renderList() {
+      const rows = data.decisions;
+      if (!rows.length) {
+        el("content").innerHTML = `<div class="empty">${status === "pending" ? "Nothing waiting for a decision." : "No decisions here yet."}</div>`;
+        return;
+      }
+      el("content").innerHTML = `<table><thead><tr><th>Quadrant</th><th>Decision</th><th>Agent</th><th>Task</th><th>Evidence</th><th>Risk</th><th>Clef</th><th>${status === "pending" ? "" : "Decided"}</th></tr></thead><tbody>${
+        rows.map((d) => `<tr data-id="${esc(d.identifier)}" class="${d.identifier === selected ? "selected" : ""}">
+          <td>${d.quadrant ? `<span class="q q-${d.quadrant}">${QUADRANT[d.quadrant]}</span>` : `<span class="meta">${d.eval_error ? "Clef error" : "not evaluated"}</span>`}</td>
+          <td><span class="id">${esc(d.identifier)}</span> ${esc(d.title)} ${d.kind === "mcp_call" ? `<span class="pill">MCP call</span>` : ""} ${status === "all" ? `<span class="pill s-${d.status}">${d.status}</span>` : ""}
+            ${unsureNote(d) ? `<div class="meta">${esc(unsureNote(d))}</div>` : ""}</td>
+          <td>${esc(d.requested_by)}</td>
+          <td>${d.task_identifier ? `<span class="id">${esc(d.task_identifier)}</span>` : "—"}</td>
+          <td>${meter(d.eval_evidence)}</td>
+          <td class="meta">${esc(level("risk", d.eval_risk))}</td>
+          <td>${d.eval_recommendation ? `<span class="${d.eval_recommendation === "approve" ? "done" : "danger"}">${d.eval_recommendation}</span> <span class="meta">${pct(d.eval_confidence)}</span>` : "—"}</td>
+          <td>${d.status === "pending"
+            ? `<div class="row-actions"><button class="primary" data-act="approve">Approve</button><button class="ghost" data-act="reject">Reject</button></div>`
+            : `<span class="meta">${esc(d.decided_by ?? "—")}</span>`}</td>
+        </tr>`).join("")
+      }</tbody></table>`;
+      el("content").querySelectorAll("tr[data-id]").forEach((tr) => tr.addEventListener("click", () => openDetail(tr.dataset.id)));
+      el("content").querySelectorAll("[data-act]").forEach((btn) => btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const id = btn.closest("tr").dataset.id;
+        await decide(id, btn.dataset.act, "");
+      }));
+    }
+
+    // ---- matrix (Eisenhower: urgent x important) ---------------------------------------------
+    const STATUS_COLOR = { pending: "var(--accent)", approved: "var(--ok)", rejected: "var(--bad)", withdrawn: "var(--muted)" };
+    const REC_COLOR = { approve: "var(--ok)", reject: "var(--bad)" };
+    function jitter(id, n) { // stable small offset so dots at the same scores don't overlap
+      let h = 0;
+      for (const c of id + n) h = (h * 31 + c.charCodeAt(0)) | 0;
+      return ((h % 1000) / 1000 - 0.5) * 0.18;
+    }
+    function renderMatrix() {
+      const W = 640, H = 520, L = 56, R = 16, T = 16, B = 46;
+      const x = (v) => L + (v / 3) * (W - L - R);
+      const y = (v) => T + (1 - v / 3) * (H - T - B);
+      const evaluated = data.decisions.filter((d) => d.eval_urgency !== null && d.eval_importance !== null);
+      const rest = data.decisions.filter((d) => d.eval_urgency === null || d.eval_importance === null);
+      const quad = (x0, y0, x1, y1, label, color) =>
+        `<rect x="${x(x0)}" y="${y(y1)}" width="${x(x1) - x(x0)}" height="${y(y0) - y(y1)}" fill="${color}" opacity=".06"/>
+         <text x="${(x(x0) + x(x1)) / 2}" y="${y(y1) + 22}" text-anchor="middle" font-size="13" font-weight="600" fill="${color}">${label}</text>`;
+      const dots = evaluated.map((d) => {
+        const cx = x(Math.max(0, Math.min(3, d.eval_urgency + jitter(d.identifier, "x"))));
+        const cy = y(Math.max(0, Math.min(3, d.eval_importance + jitter(d.identifier, "y"))));
+        const r = 7 + (d.eval_risk ?? 0) * 3;
+        const ring = REC_COLOR[d.eval_recommendation] ?? "transparent";
+        return `<g class="dot" data-id="${esc(d.identifier)}"><title>${esc(d.identifier)} ${esc(d.title)}
+${d.status} · Clef ${esc(d.eval_recommendation ?? "—")} ${pct(d.eval_confidence)} · risk ${esc(level("risk", d.eval_risk))}</title>
+          <circle cx="${cx}" cy="${cy}" r="${r}" fill="${STATUS_COLOR[d.status]}" fill-opacity=".85" stroke="${ring}" stroke-width="3"/>
+          ${d.identifier === selected ? `<circle cx="${cx}" cy="${cy}" r="${r + 5}" fill="none" stroke="var(--fg)" stroke-width="1.5" stroke-dasharray="3 3"/>` : ""}</g>`;
+      }).join("");
+      el("content").innerHTML = `<div class="matrix-wrap">
+        <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Decisions by urgency and importance">
+          ${quad(0, 1.5, 1.5, 3, "Plan", "var(--accent)")}
+          ${quad(1.5, 1.5, 3, 3, "Do now", "var(--bad)")}
+          ${quad(0, 0, 1.5, 1.5, "Later", "var(--muted)")}
+          ${quad(1.5, 0, 3, 1.5, "Quick call", "#2563eb")}
+          <line x1="${x(1.5)}" y1="${y(0)}" x2="${x(1.5)}" y2="${y(3)}" stroke="var(--border)" stroke-width="1.5"/>
+          <line x1="${x(0)}" y1="${y(1.5)}" x2="${x(3)}" y2="${y(1.5)}" stroke="var(--border)" stroke-width="1.5"/>
+          <rect x="${x(0)}" y="${y(3)}" width="${x(3) - x(0)}" height="${y(0) - y(3)}" fill="none" stroke="var(--border)"/>
+          <text x="${(x(0) + x(3)) / 2}" y="${H - 10}" text-anchor="middle" font-size="12" fill="var(--muted)">Urgency →</text>
+          <text x="16" y="${(y(0) + y(3)) / 2}" text-anchor="middle" font-size="12" fill="var(--muted)" transform="rotate(-90 16 ${(y(0) + y(3)) / 2})">Importance →</text>
+          ${dots}
+        </svg>
+        <div class="legend">
+          <span style="--c:var(--accent)">pending</span><span style="--c:var(--ok)">approved</span><span style="--c:var(--bad)">rejected</span>
+          <span style="--c:transparent;--r:var(--ok)">Clef: approve</span><span style="--c:transparent;--r:var(--bad)">Clef: reject</span>
+          <span style="--c:var(--muted)">bigger = riskier</span>
+        </div>
+        ${rest.length ? `<div class="unevaluated">Not evaluated: ${rest.map((d) => `<a data-id="${esc(d.identifier)}">${esc(d.identifier)}</a>`).join("")}</div>` : ""}
+        ${!data.decisions.length ? `<div class="empty">Nothing to show.</div>` : ""}
+      </div>`;
+      el("content").querySelectorAll("[data-id]").forEach((n) => n.addEventListener("click", () => openDetail(n.dataset.id)));
+    }
+
+    function render() {
+      renderToolbar();
+      renderBanner(data.settings);
+      if (view === "matrix") renderMatrix(); else renderList();
+    }
+
+    async function load() {
+      try {
+        const q = new URLSearchParams({ status });
+        if (decidedBy && status !== "pending") q.set("decided_by", decidedBy);
+        data = await api("GET", `/api/decisions?${q}`);
+        render();
+      } catch (err) {
+        el("content").innerHTML = `<div class="empty error">${esc(err.message)}</div>`;
+      }
+    }
+
+    // ---- panel -----------------------------------------------------------------------------
+    function showPanel(title, html) {
+      el("panel-title").textContent = title;
+      el("panel-body").innerHTML = html;
+      el("panel").hidden = false;
+    }
+    function closePanel() {
+      el("panel").hidden = true;
+      panelMode = null;
+      selected = null;
+      const u = new URL(location.href);
+      u.searchParams.delete("decision");
+      history.replaceState(null, "", u);
+      if (data) render();
+    }
+    el("close-panel").addEventListener("click", closePanel);
+
+    function evidenceItem(e, d) {
+      const content = e.kind === "link" && /^https?:\/\//.test(e.content)
+        ? `<a href="${esc(e.content)}" target="_blank" rel="noopener">${esc(e.content)}</a>`
+        : e.kind === "artifact"
+          ? `<a href="/artifacts.html?agent=${encodeURIComponent(d.requested_by)}&file=${encodeURIComponent(e.content)}&path=${encodeURIComponent(e.content.split("/").slice(0, -1).join("/"))}">${esc(e.content)}</a>`
+          : e.kind === "report" && d.task_identifier
+            ? `<a href="/tasks.html?task=${encodeURIComponent(d.task_identifier)}">${esc(e.content)}</a>`
+            : `<pre>${esc(e.content)}</pre>`;
+      return `<li><span class="pill">${esc(e.kind)}</span> <b>${esc(e.label)}</b> <span class="meta">${esc(e.added_by)}</span><div>${content}</div></li>`;
+    }
+
+    function bars(ev) {
+      if (!ev?.answers) return "";
+      const a = ev.answers;
+      const rec = a.recommendation;
+      let html = "";
+      if (rec?.probabilities) {
+        for (const [k, p] of Object.entries(rec.probabilities)) {
+          html += `<div class="bar"><span>${esc(k)}</span><span class="track"><i style="width:${Math.round(p * 100)}%;background:${k === "approve" ? "var(--ok)" : "var(--bad)"}"></i></span><span class="v">${Math.round(p * 100)}%</span></div>`;
+        }
+      }
+      for (const k of ["urgency", "importance", "risk", "evidence"]) {
+        if (!a[k]) continue;
+        html += `<div class="bar"><span>${k}</span><span class="track"><i style="width:${Math.round((a[k].score / 3) * 100)}%"></i></span><span class="v" title="confidence ${pct(a[k].confidence)}">${esc(level(k, a[k].score))}</span></div>`;
+      }
+      return html;
+    }
+
+    async function openDetail(id) {
+      selected = id;
+      panelMode = "detail";
+      const u = new URL(location.href);
+      u.searchParams.set("decision", id);
+      history.replaceState(null, "", u);
+      if (data) render();
+      showPanel(id, `<div class="empty">Loading…</div>`);
+      let d;
+      try { d = await api("GET", `/api/decisions/${encodeURIComponent(id)}`); }
+      catch (err) { showPanel(id, `<div class="error">${esc(err.message)}</div>`); return; }
+      const last = d.evaluations[0];
+      const note = data ? unsureNote(d) : "";
+      const crit = d.task?.criteria?.length && last?.answers
+        ? `<label>Acceptance criteria (Clef pre-check)</label>${d.task.criteria.map((c) => {
+            const p = last.answers[`criterion.${c.position}`]?.probability;
+            return `<div class="crit"><span>${p === undefined ? "·" : p >= 0.5 ? "✓" : "✗"}</span><span>${c.position}. ${esc(c.text)}</span><span class="p">${p === undefined ? "" : pct(p)}</span></div>`;
+          }).join("")}`
+        : "";
+      showPanel(`${d.identifier} ${d.title}`, `
+        <div class="meta"><span class="pill s-${d.status}">${d.status}</span> requested by ${esc(d.requested_by)} · ${when(d.created_at)}
+          ${d.task ? ` · task <a href="/tasks.html?task=${encodeURIComponent(d.task.identifier)}">${esc(d.task.identifier)}</a> (${esc(d.task.state)})` : ""}
+          ${d.quadrant ? ` · <span class="q q-${d.quadrant}">${QUADRANT[d.quadrant]}</span>` : ""}</div>
+        ${d.decided_by ? `<div class="meta">Decided by <b>${esc(d.decided_by)}</b> ${when(d.decided_at)}${d.decision_comment ? `: ${esc(d.decision_comment)}` : ""}</div>` : ""}
+        ${!d.has_what_why_how ? `<div class="warn">Missing What / Why / How headings.</div>` : ""}
+        ${note ? `<div class="warn">${esc(note)}</div>` : ""}
+        ${d.eval_error ? `<div class="warn">Clef error: ${esc(d.eval_error)}</div>` : ""}
+        <div class="md">${markdown(d.description)}</div>
+        <label>Evidence (${d.evidence.length})</label>
+        <ul class="evidence">${d.evidence.map((e) => evidenceItem(e, d)).join("")}</ul>
+        ${last?.answers ? `<label>Clef (${esc(MODEL_LABEL[last.model] ?? last.model)}, ${when(last.created_at)})</label>${bars(last)}` : ""}
+        ${crit}
+        ${d.evaluations.length ? `<label>Evaluations</label><ul class="history">${d.evaluations.map((e) => `<li>${when(e.created_at)} · ${esc(MODEL_LABEL[e.model] ?? e.model)} · ${e.error ? `error: ${esc(e.error)}` : `${esc(e.answers?.recommendation?.choice ?? "?")} ${pct(e.answers?.recommendation?.confidence)} → ${esc(e.outcome ?? "")}`}</li>`).join("")}</ul>` : ""}
+        <div class="actions-box">
+          ${d.status === "pending" ? `
+            <label for="d-comment">Comment (sent to the agent)</label>
+            <textarea id="d-comment" placeholder="Optional"></textarea>
+            <div class="form-actions">
+              <button class="primary" id="d-approve">Approve</button>
+              <button class="ghost danger" id="d-reject">Reject</button>
+              <button class="ghost" id="d-evaluate">Re-evaluate</button>
+            </div>` : ""}
+          ${d.status === "approved" || d.status === "rejected" ? `<div class="form-actions"><button class="ghost" id="d-reopen">Reopen</button></div>` : ""}
+          <div class="error" id="d-error"></div>
+        </div>`);
+      el("d-approve")?.addEventListener("click", () => decide(d.identifier, "approve", el("d-comment").value));
+      el("d-reject")?.addEventListener("click", () => decide(d.identifier, "reject", el("d-comment").value));
+      el("d-reopen")?.addEventListener("click", async () => {
+        if (!confirm(`Reopen ${d.identifier}? It goes back to pending and the agent is told.`)) return;
+        await act(() => api("POST", `/api/decisions/${encodeURIComponent(d.identifier)}/reopen`), d.identifier);
+      });
+      el("d-evaluate")?.addEventListener("click", async (e) => {
+        e.target.disabled = true;
+        e.target.textContent = "Evaluating…";
+        await act(() => api("POST", `/api/decisions/${encodeURIComponent(d.identifier)}/evaluate`), d.identifier);
+      });
+    }
+
+    async function act(fn, id) {
+      el("error").textContent = "";
+      try {
+        await fn();
+      } catch (err) {
+        (el("d-error") ?? el("error")).textContent = err.message;
+        return;
+      }
+      await load();
+      if (panelMode === "detail" && selected === id) openDetail(id);
+    }
+
+    async function decide(id, action, comment) {
+      if (action === "reject" && !comment && !confirm(`Reject ${id} without a comment? The agent won't know why.`)) return;
+      await act(() => api("POST", `/api/decisions/${encodeURIComponent(id)}/${action}`, { comment }), id);
+    }
+
+    // ---- configuration panel ---------------------------------------------------------------
+    function openConfig() {
+      panelMode = "config";
+      const s = data.settings;
+      showPanel("Configuration", `
+        <label>Mode</label>
+        <div class="segmented" id="c-mode">
+          <button type="button" data-mode="manual">Manual</button>
+          <button type="button" data-mode="system_one">System One</button>
+        </div>
+        <p class="help" id="c-mode-help"></p>
+        <label for="c-model">Model</label>
+        <select id="c-model">
+          <option value="clef-flash">Clef Flash (fast, cheap)</option>
+          <option value="clef">Clef (for high-stakes calls)</option>
+          <option value="off">Off (no Clef, Manual only)</option>
+        </select>
+        <label for="c-threshold">Confidence threshold</label>
+        <div class="range-row">
+          <input type="range" id="c-threshold-range" min="0.5" max="0.99" step="0.01">
+          <input type="number" id="c-threshold" min="0.5" max="0.99" step="0.01">
+        </div>
+        <p class="help">System One decides only when Clef's recommendation is at least this confident. Below it, the Decision waits for you.</p>
+        <label class="check"><input type="checkbox" id="c-auto-reject"> Also reject on its own</label>
+        <p class="help">Off: Clef only approves; anything it would reject waits for you. Critical risk is never approved by Clef.</p>
+        <div class="form-actions"><button class="primary" id="c-save">Save</button><button class="ghost" id="c-cancel">Cancel</button></div>
+        <div class="error" id="c-error"></div>`);
+      let mode = s.mode;
+      const setMode = (m) => {
+        mode = m;
+        document.querySelectorAll("#c-mode button").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+        el("c-mode-help").textContent = m === "manual"
+          ? "Clef evaluates and ranks; you approve or reject every Decision."
+          : "Clef decides when it's confident enough; the rest waits for you.";
+        const off = el("c-model").value === "off";
+        el("c-threshold").disabled = el("c-threshold-range").disabled = el("c-auto-reject").disabled = m === "manual";
+        if (m === "system_one" && off) el("c-model").value = "clef-flash";
+      };
+      el("c-model").value = s.model;
+      el("c-threshold").value = el("c-threshold-range").value = s.threshold;
+      el("c-auto-reject").checked = s.auto_reject;
+      setMode(s.mode);
+      document.querySelectorAll("#c-mode button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+      el("c-model").addEventListener("change", () => { if (el("c-model").value === "off") setMode("manual"); });
+      el("c-threshold-range").addEventListener("input", () => (el("c-threshold").value = el("c-threshold-range").value));
+      el("c-threshold").addEventListener("input", () => (el("c-threshold-range").value = el("c-threshold").value));
+      el("c-cancel").addEventListener("click", closePanel);
+      el("c-save").addEventListener("click", async () => {
+        const btn = el("c-save");
+        btn.disabled = true;
+        btn.textContent = "Saving…";
+        el("c-error").textContent = "";
+        try {
+          data.settings = await api("PATCH", "/api/decisions/settings", {
+            mode,
+            model: el("c-model").value,
+            threshold: Number(el("c-threshold").value),
+            auto_reject: el("c-auto-reject").checked,
+          });
+          renderBanner(data.settings);
+          closePanel();
+        } catch (err) {
+          el("c-error").textContent = err.message;
+          btn.disabled = false;
+          btn.textContent = "Save";
+        }
+      });
+    }
+    el("open-config").addEventListener("click", () => data && openConfig());
+
+    // ---- wiring ----------------------------------------------------------------------------
+    document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => {
+      status = b.dataset.status;
+      const u = new URL(location.href);
+      u.searchParams.set("status", status);
+      history.replaceState(null, "", u);
+      load();
+    }));
+    document.querySelectorAll("#view button").forEach((b) => b.addEventListener("click", () => {
+      view = b.dataset.view;
+      try { localStorage.setItem("flaretown.decisions.view", view); } catch { /* not remembered */ }
+      render();
+    }));
+    el("decided-by").addEventListener("change", () => { decidedBy = el("decided-by").value; load(); });
+
+    load().then(() => { if (selected) openDetail(selected); });
+    setInterval(() => { if (panelMode !== "config") load(); }, 15000);
+  </script>
+</body>
+</html>

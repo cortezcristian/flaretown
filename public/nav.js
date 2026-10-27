@@ -6,11 +6,15 @@
     { href: "/chat.html", label: "Chat", icon: "M4 5h16v11H8l-4 4z" },
     { href: "/tasks.html", label: "Tasks", icon: "M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2", badge: "tasks" },
     { href: "/kanban.html", label: "Kanban", icon: "M4 4h4v16H4zM10 4h4v10h-4zM16 4h4v6h-4z" },
+    { href: "/decisions.html", label: "Decisions", icon: "M12 3v18M5 7h14M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0z", badge: "decisions" },
     { href: "/routines.html", label: "Routines", icon: "M12 7v5l3 2M21 12a9 9 0 1 1-3-6.7M21 4v4h-4" },
     { href: "/artifacts.html", label: "Artifacts", icon: "M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9" },
     { href: "/containers.html", label: "Containers", icon: "M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10" },
+    { href: "/skills.html", label: "Skills", icon: "M12 2l2.4 5.6L20 8.3l-4.3 4 1.1 6L12 15.4 7.2 18.3l1.1-6-4.3-4 5.6-.7z" },
+    { href: "/mcps.html", label: "MCPs", icon: "M9 2v5M15 2v5M6 7h12v4a6 6 0 0 1-12 0zM12 17v5" },
     { href: "/agents.html", label: "Agents", icon: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21c0-4 4-6 8-6s8 2 8 6" },
     { href: "/orchestrator.html", label: "Orchestrator", icon: "M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" },
+    { href: "/projects.html", label: "Projects", icon: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" },
   ];
 
   const style = document.createElement("style");
@@ -204,6 +208,16 @@
         if (el) el.textContent = d.counts?.open ? String(d.counts.open) : "";
       })
       .catch(() => {});
+  // Badge: pending Decisions.
+  const refreshDecisions = () =>
+    fetch("/api/decisions?status=pending")
+      .then((r) => r.json())
+      .then((d) => {
+        const el = nav.querySelector('[data-badge="decisions"]');
+        if (el) el.textContent = d.counts?.pending ? String(d.counts.pending) : "";
+      })
+      .catch(() => {});
   refresh();
-  setInterval(refresh, 15000);
+  refreshDecisions();
+  setInterval(() => { refresh(); refreshDecisions(); }, 15000);
 })();

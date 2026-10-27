@@ -1,6 +1,8 @@
 // REST for agents (SPEC-api section 4): list, create, get, delete (retire), config, and models.
 // Chat routing (/api/agents/:id/chat) is in index.ts.
 
+import { getAgentSkills, setAgentSkills } from "../services/skills";
+import { attachServer } from "../services/mcps";
 import { MAIN_MODELS } from "../models";
 import { agentStub, pokeOrchestrator, rescheduleRoutines } from "../runtime";
 import { getAgentConfig, updateAgentConfig } from "../services/agentConfig";
@@ -57,9 +59,24 @@ export async function handleAgentsApi(request: Request, env: Env, pathname: stri
           container_image: str(b.container_image),
           container_instance: str(b.container_instance),
         });
+        if (Array.isArray(b.skills) && b.skills.length) {
+          await setAgentSkills(db, HUMAN, agent.id, b.skills.filter((s): s is string => typeof s === "string"));
+        }
+        // MCP servers picked in the form (task 018). OAuth ones wait for Connect in the chat.
+        const mcps: Array<{ server: string; status: string; error: string | null }> = [];
+        if (Array.isArray(b.mcps)) {
+          for (const server of b.mcps.filter((s): s is string => typeof s === "string")) {
+            try {
+              const r = await attachServer(env, HUMAN, agent.id, server, { origin: new URL(request.url).origin });
+              mcps.push({ server, status: r.status, error: r.error });
+            } catch (err) {
+              mcps.push({ server, status: "failed", error: err instanceof ServiceError ? err.message : "attach failed" });
+            }
+          }
+        }
         // Create its Artifacts repo now (also created lazily on first use).
         ctxWait(ensureAgentRepo(env, agent.id));
-        return json(agent, 201);
+        return json({ ...agent, mcps }, 201);
       }
       return methodNotAllowed();
     }
@@ -111,6 +128,18 @@ export async function handleAgentsApi(request: Request, env: Env, pathname: stri
       }
       if (request.method !== "POST") return methodNotAllowed();
       return json(sandbox[2] === "restart" ? await stub.sandboxRestart() : await stub.sandboxReset());
+    }
+
+    // Skills of one agent (task 017).
+    const skillsPath = pathname.match(/^\/api\/agents\/([a-z0-9-]+)\/skills$/);
+    if (skillsPath) {
+      if (request.method === "GET") return json(await getAgentSkills(db, skillsPath[1]!));
+      if (request.method === "PUT") {
+        const b = await readJson(request);
+        const names = Array.isArray(b.skills) ? b.skills.filter((s): s is string => typeof s === "string") : [];
+        return json(await setAgentSkills(db, HUMAN, skillsPath[1]!, names));
+      }
+      return methodNotAllowed();
     }
 
     const compact = pathname.match(/^\/api\/agents\/([a-z0-9-]+)\/compact$/);

@@ -8,6 +8,7 @@
   <style>
     .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
     .card h2 { font-size: 15px; margin: 0 0 8px; }
+    .card h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 16px 0 6px; font-weight: 600; }
     .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
     .card-head h2 { margin: 0; }
     #s-error:empty { display: none; }
@@ -19,6 +20,7 @@
     .stat b { color: var(--fg); font-weight: 600; }
     .on { color: var(--ok); } .off { color: var(--muted); }
   </style>
+  <script src="/theme.js"></script>
   <script src="/nav.js" defer></script>
 </head>
 <body>
@@ -35,11 +37,19 @@
           <div class="card">
             <h2>Orchestrator</h2>
             <label class="switch"><input type="checkbox" id="s-enabled"> <span>Enabled <span class="meta">(off: queued tasks stay in todo)</span></span></label>
+            <h3>Tasks</h3>
             <div class="grid">
               <div><label for="s-poll">Poll interval (seconds)</label><input id="s-poll" type="number" min="30" max="3600" step="1"></div>
               <div><label for="s-max">Max concurrent per agent</label><input id="s-max" type="number" min="1" max="5" step="1"></div>
               <div><label for="s-stall">Stall timeout (minutes)</label><input id="s-stall" type="number" min="1" max="1440" step="1"></div>
             </div>
+            <h3>Agents</h3>
+            <div class="grid">
+              <div><label for="s-max-leads">Max Leads</label><input id="s-max-leads" type="number" min="1" max="50" step="1"></div>
+              <div><label for="s-max-ops">Max Operators per Lead</label><input id="s-max-ops" type="number" min="1" max="50" step="1"></div>
+              <div class="meta" style="align-self:end" id="s-agents-total"></div>
+            </div>
+            <div class="meta" style="margin-top:6px">Counts active agents only. Lowering a limit doesn't retire anyone; it only blocks new agents until you're under it.</div>
           </div>
 
           <div class="card">
@@ -104,6 +114,9 @@
       el("s-poll").value = settings.poll_interval_s;
       el("s-max").value = settings.max_concurrent_per_agent;
       el("s-stall").value = settings.stall_timeout_min;
+      el("s-max-leads").value = settings.agents_max_leads;
+      el("s-max-ops").value = settings.agents_max_operators_per_lead;
+      syncBounds();
     }
 
     async function load(fill = false) {
@@ -111,6 +124,19 @@
       if (fill) fillForm(data);
       renderStatus(data);
     }
+
+    // Sandbox maxes can't exceed how many agents a tier can have.
+    function syncBounds() {
+      const leads = Number(el("s-max-leads").value) || 1;
+      const ops = leads * (Number(el("s-max-ops").value) || 1);
+      el("s-agents-total").textContent = `Up to ${1 + leads + ops} agents (1 Principal, ${leads} Leads, ${ops} Operators).`;
+      for (const [id, max] of [["s-sbx-leads", leads], ["s-sbx-operators", ops]]) {
+        el(id).max = max;
+        if (Number(el(id).value) > max) el(id).value = max;
+      }
+    }
+    el("s-max-leads").addEventListener("input", syncBounds);
+    el("s-max-ops").addEventListener("input", syncBounds);
 
     el("settings").addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -130,6 +156,8 @@
           poll_interval_s: Number(el("s-poll").value),
           max_concurrent_per_agent: Number(el("s-max").value),
           stall_timeout_min: Number(el("s-stall").value),
+          agents_max_leads: Number(el("s-max-leads").value),
+          agents_max_operators_per_lead: Number(el("s-max-ops").value),
         });
         fillForm(data);
         renderStatus(data);
